@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+auth*.json
+
+# Logs and runtime state
+*.log
+logs/
+tmp/
+temp/
+*.pid
+*.lock
+
+# Build/cache output
+dist/
+build/
+coverage/
+.cache/
+.turbo/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# Local agent data if copied accidentally
+.hermes/
+.zeroclaw/
+.pi/
+state/
+sessions/
+memories/

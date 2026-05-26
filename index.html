@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111315'/%3E%3Cpath d='M8 10h16v12H8z' fill='%235cc8a7'/%3E%3Cpath d='M11 14h10v2H11zm0 4h6v2h-6z' fill='%23111315'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header>
+    <h1>Agent Console</h1>
+    <button id="refreshBtn" type="button">새로고침</button>
+  </header>
+
+  <main>
+    <aside class="stack" aria-label="관리 영역">
+      <div class="toolbar">
+        <div>
+          <label for="cwd">작업 폴더</label>
+          <input id="cwd" list="cwdHistory" placeholder="상태 조회 후 자동 입력">
+          <datalist id="cwdHistory"></datalist>
+          <div id="cwdStatus" class="field-error" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="panel stack" tabindex="0" aria-labelledby="statusHeading">
+        <h2 id="statusHeading">상태</h2>
+        <div id="statusList" class="stack status-list" aria-live="polite"></div>
+      </div>
+
+      <div class="panel stack" id="managePanel" tabindex="0" aria-labelledby="manageHeading">
+        <h2 id="manageHeading">관리</h2>
+        <button class="primary" data-update="all" type="button">전체 업데이트</button>
+        <details class="manage-details">
+          <summary>개별 작업</summary>
+          <div class="preset-grid">
+            <button data-update="hermes" type="button">Hermes 업데이트</button>
+            <button data-update="pi" type="button">Pi 업데이트</button>
+            <button data-update="zeroclaw" type="button">ZeroClaw 업데이트</button>
+            <button data-preset="hermes_status">Hermes 상태</button>
+            <button data-preset="hermes_config">Hermes 설정</button>
+            <button data-preset="hermes_skills">Hermes 스킬</button>
+            <button data-preset="hermes_tools">Hermes 도구</button>
+            <button data-preset="hermes_logs">Hermes 로그</button>
+            <button data-preset="pi_models">Pi 모델</button>
+            <button data-preset="pi_packages">Pi 패키지</button>
+            <button data-preset="zeroclaw_status">ZeroClaw 상태</button>
+            <button data-preset="zeroclaw_doctor">ZeroClaw 진단</button>
+          </div>
+        </details>
+      </div>
+    </aside>
+
+    <section class="stack work-area" aria-label="작업 영역">
+      <div class="grid" id="agentCards" aria-live="polite"></div>
+
+      <div class="panel stack chat-panel" tabindex="0" aria-labelledby="chatHeading">
+        <div class="row panel-head chat-head">
+          <h2 id="chatHeading">채팅</h2>
+          <div class="segmented" role="tablist" aria-label="채팅 에이전트 선택">
+            <button class="agentChoice active" data-agent="pi" type="button" role="tab" aria-selected="true" tabindex="0">Pi</button>
+            <button class="agentChoice" data-agent="hermes" type="button" role="tab" aria-selected="false" tabindex="-1">Hermes</button>
+            <button class="agentChoice" data-agent="zeroclaw" type="button" role="tab" aria-selected="false" tabindex="-1">ZeroClaw</button>
+          </div>
+        </div>
+        <div id="activeRunBanner" class="run-banner" aria-live="polite" hidden></div>
+
+        <div class="field-row">
+          <div>
+            <label for="prompt">메시지</label>
+            <textarea id="prompt" placeholder="현재 작업 폴더를 기준으로 요청을 입력" aria-required="true" aria-invalid="false" aria-describedby="promptError"></textarea>
+            <div id="promptError" class="field-error" aria-live="polite"></div>
+          </div>
+          <div class="stack control-stack">
+            <div>
+              <label for="template">프롬프트 템플릿</label>
+              <select id="template">
+                <option value="" selected>직접 입력</option>
+                <option value="review">코드 리뷰</option>
+                <option value="summarize">폴더 요약</option>
+                <option value="test">테스트 진단</option>
+                <option value="fix">오류 분석</option>
+              </select>
+            </div>
+            <div>
+              <label for="speed">응답 모드</label>
+              <select id="speed">
+                <option value="fast" selected>빠름</option>
+                <option value="balanced">균형</option>
+                <option value="deep">깊게</option>
+              </select>
+            </div>
+            <div id="thinkingField">
+              <label id="thinkingLabel" for="thinking">Pi 생각 수준</label>
+              <select id="thinking">
+                <option value="high" selected>high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+              </select>
+            </div>
+            <div>
+              <label for="timeout">제한 시간(초)</label>
+              <input id="timeout" type="number" min="30" max="3600" value="600">
+            </div>
+            <div class="send-actions">
+              <button class="primary" id="sendBtn" type="button" title="Ctrl+Enter로 보내기, Alt+Up/Down으로 프롬프트 히스토리"><span>보내기</span><span class="key-hint">Ctrl+Enter</span></button>
+              <button class="secondary-danger" id="inlineStopBtn" type="button" disabled>중단 Esc</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel stack output-panel" tabindex="0" aria-labelledby="outputHeading">
+        <div class="row panel-head">
+          <h2 id="outputHeading">출력</h2>
+          <div class="row">
+            <span id="runStatus" class="muted run-status">대기</span>
+            <button class="secondary-danger" id="stopBtn" type="button" disabled>중단</button>
+            <button id="clearBtn" type="button">지우기</button>
+          </div>
+        </div>
+        <div id="output" class="output-list" tabindex="0" role="log" aria-live="polite" aria-label="명령 출력"></div>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>
+
