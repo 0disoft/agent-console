@@ -12,41 +12,132 @@ export const defaultModel = process.env.AGENT_CONSOLE_MODEL || "gpt-5.5";
 export const defaultProvider = process.env.AGENT_CONSOLE_PROVIDER || "openai-codex";
 export const defaultCwd = chooseDefaultCwd();
 
-export const tools: Record<ToolName, ToolResolution> = {
-  hermes: resolveTool("hermes", "HERMES_BIN", [
-    join(home, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
-    join(home, ".local", "bin", "hermes"),
-    join(home, ".hermes", "bin", "hermes"),
-  ]),
-  pi: resolveTool("pi", "PI_BIN", [
-    join(home, ".bun", "bin", executableName("pi")),
-    join(home, ".local", "bin", "pi"),
-  ]),
-  zeroclaw: resolveTool("zeroclaw", "ZEROCLAW_BIN", [
-    join(home, ".cargo", "bin", executableName("zeroclaw")),
-    join(home, ".local", "bin", "zeroclaw"),
-  ]),
+export type AgentDefinition = {
+  id: string;
+  label: string;
+  commandName: string;
+  envName: string;
+  knownPaths: string[];
+  chatKind: "hermes" | "pi" | "zeroclaw";
+  supportsChat: boolean;
+  supportsThinking?: boolean;
+  updateArgs?: string[];
+  versionArgs: string[];
+  modelArgs?: string[];
+  statusArgs?: string[];
+  presets?: Array<{
+    key: string;
+    label: string;
+    args: string[];
+  }>;
 };
 
-export const presets = {
-  hermes_status: [tools.hermes.command, "status"],
-  hermes_config: [tools.hermes.command, "config", "show"],
-  hermes_skills: [tools.hermes.command, "skills", "list"],
-  hermes_tools: [tools.hermes.command, "tools", "--summary", "list"],
-  hermes_logs: [tools.hermes.command, "logs"],
-  pi_models: [tools.pi.command, "--list-models", defaultModel],
-  pi_packages: [tools.pi.command, "list"],
-  pi_version: [tools.pi.command, "--version"],
-  zeroclaw_status: [tools.zeroclaw.command, "status"],
-  zeroclaw_doctor: [tools.zeroclaw.command, "doctor"],
-  zeroclaw_version: [tools.zeroclaw.command, "--version"],
-};
+export const agentDefinitions: AgentDefinition[] = [
+  {
+    id: "hermes",
+    label: "Hermes",
+    commandName: "hermes",
+    envName: "HERMES_BIN",
+    knownPaths: [
+      join(home, "AppData", "Local", "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe"),
+      join(home, ".local", "bin", "hermes"),
+      join(home, ".hermes", "bin", "hermes"),
+    ],
+    chatKind: "hermes",
+    supportsChat: true,
+    updateArgs: ["update", "--yes"],
+    versionArgs: ["version"],
+    presets: [
+      { key: "hermes_status", label: "Hermes 상태", args: ["status"] },
+      { key: "hermes_config", label: "Hermes 설정", args: ["config", "show"] },
+      { key: "hermes_skills", label: "Hermes 스킬", args: ["skills", "list"] },
+      { key: "hermes_tools", label: "Hermes 도구", args: ["tools", "--summary", "list"] },
+      { key: "hermes_logs", label: "Hermes 로그", args: ["logs"] },
+    ],
+  },
+  {
+    id: "pi",
+    label: "Pi",
+    commandName: "pi",
+    envName: "PI_BIN",
+    knownPaths: [
+      join(home, ".bun", "bin", executableName("pi")),
+      join(home, ".local", "bin", "pi"),
+    ],
+    chatKind: "pi",
+    supportsChat: true,
+    supportsThinking: true,
+    updateArgs: ["update"],
+    versionArgs: ["--version"],
+    modelArgs: ["--list-models", defaultModel],
+    presets: [
+      { key: "pi_models", label: "Pi 모델", args: ["--list-models", defaultModel] },
+      { key: "pi_packages", label: "Pi 패키지", args: ["list"] },
+      { key: "pi_version", label: "Pi 버전", args: ["--version"] },
+    ],
+  },
+  {
+    id: "zeroclaw",
+    label: "ZeroClaw",
+    commandName: "zeroclaw",
+    envName: "ZEROCLAW_BIN",
+    knownPaths: [
+      join(home, ".cargo", "bin", executableName("zeroclaw")),
+      join(home, ".local", "bin", "zeroclaw"),
+    ],
+    chatKind: "zeroclaw",
+    supportsChat: true,
+    updateArgs: ["update", "--force"],
+    versionArgs: ["--version"],
+    statusArgs: ["status"],
+    presets: [
+      { key: "zeroclaw_status", label: "ZeroClaw 상태", args: ["status"] },
+      { key: "zeroclaw_doctor", label: "ZeroClaw 진단", args: ["doctor"] },
+      { key: "zeroclaw_version", label: "ZeroClaw 버전", args: ["--version"] },
+    ],
+  },
+];
 
-export const updateTargets = {
-  hermes: [tools.hermes.command, "update", "--yes"],
-  pi: [tools.pi.command, "update"],
-  zeroclaw: [tools.zeroclaw.command, "update", "--force"],
-};
+export const tools: Record<ToolName, ToolResolution> = Object.fromEntries(
+  agentDefinitions.map((agent) => [agent.id, resolveTool(agent.commandName, agent.envName, agent.knownPaths)]),
+);
+
+export const presets = Object.fromEntries(
+  agentDefinitions.flatMap((agent) => (agent.presets || []).map((preset) => [
+    preset.key,
+    [tools[agent.id].command, ...preset.args],
+  ])),
+) as Record<string, string[]>;
+
+export const presetMetadata = agentDefinitions.flatMap((agent) => (agent.presets || []).map((preset) => ({
+  key: preset.key,
+  label: preset.label,
+  agent: agent.id,
+})));
+
+export const updateTargets = Object.fromEntries(
+  agentDefinitions
+    .filter((agent) => agent.updateArgs?.length)
+    .map((agent) => [agent.id, [tools[agent.id].command, ...agent.updateArgs!]]),
+) as Record<string, string[]>;
+
+export function agentDefinition(id: string) {
+  return agentDefinitions.find((agent) => agent.id === id);
+}
+
+export function agentLabel(id: string) {
+  return agentDefinition(id)?.label || id;
+}
+
+export function agentMetadata() {
+  return agentDefinitions.map((agent) => ({
+    id: agent.id,
+    label: agent.label,
+    supportsChat: agent.supportsChat,
+    supportsUpdate: Boolean(agent.updateArgs?.length),
+    supportsThinking: Boolean(agent.supportsThinking),
+  }));
+}
 
 function executableName(name: string) {
   return process.platform === "win32" ? `${name}.exe` : name;
@@ -95,7 +186,5 @@ export function resolveCwd(value?: string) {
 }
 
 export function envNameForTool(target: ToolName) {
-  if (target === "hermes") return "HERMES_BIN";
-  if (target === "pi") return "PI_BIN";
-  return "ZEROCLAW_BIN";
+  return agentDefinition(target)?.envName || `${target.toUpperCase()}_BIN`;
 }

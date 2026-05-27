@@ -1,0 +1,78 @@
+header {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #171b1e, #121517);
+}
+
+main {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  min-height: calc(100vh - 54px);
+}
+
+aside {
+  border-right: 1px solid var(--line);
+  border-left: 3px solid rgba(92, 200, 167, .42);
+  padding: 14px;
+  background: linear-gradient(180deg, #171c1f, #121618);
+  overflow: auto;
+}
+
+section {
+  padding: 16px;
+  overflow: auto;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.work-area {
+  grid-template-rows: auto auto minmax(280px, 1fr);
+  min-height: calc(100vh - 86px);
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 12px;
+}
+
+.panel-head {
+  justify-content: space-between;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.control-stack {
+  align-content: start;
+}
+
+.send-actions {
+  display: grid;
+  gap: 8px;
+}

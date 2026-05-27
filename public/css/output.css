@@ -1,0 +1,132 @@
+.output-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.output-list {
+  margin: 0;
+  min-height: 240px;
+  overflow: auto;
+  background: #0c0e10;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  line-height: 1.45;
+}
+
+.output-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #101416;
+  overflow: hidden;
+  animation: slideUpFade .22s ease-out both;
+}
+
+.output-block + .output-block {
+  margin-top: 10px;
+}
+
+.output-block.ok {
+  border-color: rgba(92, 200, 167, .55);
+}
+
+.output-block.error {
+  border-color: rgba(255, 129, 122, .65);
+}
+
+.output-block.warning {
+  border-color: rgba(255, 204, 102, .65);
+}
+
+.output-block.running {
+  border-color: rgba(117, 167, 255, .65);
+}
+
+.output-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  color: #c5cdd3;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.output-body {
+  margin: 0;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+
+.output-body.rendered {
+  font-family: inherit;
+}
+
+.output-body.rendered pre,
+.output-body.rendered code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+
+.output-body.rendered h3,
+.output-body.rendered h4,
+.output-body.rendered h5,
+.output-body.rendered h6 {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  color: #f6fafb;
+}
+
+.output-body.rendered code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #0b0d0f;
+}
+
+.output-body.rendered a {
+  color: #9bc0ff;
+}
+
+.output-body.rendered del {
+  color: var(--muted);
+}
+
+.output-body.rendered pre {
+  margin: 8px 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #0b0d0f;
+}
+
+.output-body.rendered pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.output-body.rendered p {
+  margin: 0 0 8px;
+}
+
+.output-body.rendered p:last-child,
+.output-body.rendered ul:last-child,
+.output-body.rendered ol:last-child {
+  margin-bottom: 0;
+}
+
+.output-body.rendered ul,
+.output-body.rendered ol {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+
+.output-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

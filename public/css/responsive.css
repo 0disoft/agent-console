@@ -1,0 +1,32 @@
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+
+  aside {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 42vh;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .segmented {
+    width: 100%;
+  }
+
+  .work-area {
+    min-height: auto;
+  }
+}

@@ -1,0 +1,16 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1214;
+  --panel: #191d20;
+  --panel-2: #20262a;
+  --panel-strong: #1d2428;
+  --line: #30383d;
+  --text: #edf1f3;
+  --muted: #a9b3b9;
+  --accent: #5cc8a7;
+  --accent-2: #75a7ff;
+  --danger: #ff817a;
+  --radius: 8px;
+  font-family: Inter, "Noto Sans KR", "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "kern", "liga";
+}

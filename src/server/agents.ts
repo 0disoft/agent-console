@@ -1,11 +1,15 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  agentDefinition,
+  agentDefinitions,
+  agentMetadata,
   defaultCwd,
   defaultModel,
   defaultProvider,
   envNameForTool,
   home,
+  presetMetadata,
   resolveCwd,
   tools,
   updateTargets,
@@ -38,6 +42,8 @@ async function stopHermesGateway() {
   return runCommand([
     "powershell",
     "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
     "-Command",
     "$matches=Get-CimInstance Win32_Process | Where-Object { ($_.Name -in @('python.exe','pythonw.exe','wscript.exe','cmd.exe')) -and ($_.CommandLine -match 'hermes_cli\\.main gateway run|Hermes_Gateway\\.(cmd|vbs)') }; foreach($p in $matches){ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }",
   ], { cwd: defaultCwd, timeout: 30 });
@@ -53,12 +59,14 @@ async function startHermesGateway() {
   return runCommand([
     "powershell",
     "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
     "-Command",
     `Start-Process -FilePath 'wscript.exe' -ArgumentList '"${script}"' -WindowStyle Hidden`,
   ], { cwd: defaultCwd, timeout: 30 });
 }
 
-export async function updateAgent(target: keyof typeof updateTargets, cwd?: string, signal?: AbortSignal) {
+export async function updateAgent(target: string, cwd?: string, signal?: AbortSignal) {
   await assertToolInstalled(target);
   if (target === "hermes") return updateHermes(cwd, signal);
   if (target === "zeroclaw") return updateZeroclaw(cwd, signal);
@@ -207,7 +215,7 @@ export async function updateAll(cwd?: string, signal?: AbortSignal) {
 }
 
 async function installedTargets() {
-  const checks = await Promise.all((Object.keys(updateTargets) as Array<keyof typeof updateTargets>).map(async (target) => ({
+  const checks = await Promise.all(Object.keys(updateTargets).map(async (target) => ({
     target,
     installed: await isToolInstalled(target),
   })));
@@ -219,8 +227,7 @@ async function assertToolInstalled(target: ToolName) {
   throw new Error(`${target} 실행 파일을 찾지 못했습니다. 설치하거나 ${envNameForTool(target)} 환경 변수를 지정하세요.`);
 }
 
-async function isToolInstalled(target: ToolName, versionOk = false) {
-  if (versionOk) return true;
+async function isToolInstalled(target: ToolName) {
   const tool = tools[target];
   const cached = installedCache.get(target);
   if (cached && cached.command === tool.command && Date.now() - cached.at < statusCacheMs) {
@@ -274,70 +281,53 @@ export async function statusPayload() {
   if (inflightStatus) {
     return { ...(await inflightStatus), cached: true };
   }
-  inflightStatus = buildStatusPayload().finally(() => {
-    inflightStatus = null;
-  });
-  return inflightStatus;
+  const pending = buildStatusPayload()
+    .then((payload) => {
+      cachedStatus = { at: Date.now(), payload };
+      return payload;
+    })
+    .finally(() => {
+      if (inflightStatus === pending) inflightStatus = null;
+    });
+  inflightStatus = pending;
+  return pending;
 }
 
 async function buildStatusPayload() {
-  const [hermesInstalled, piInstalled, zcInstalled] = await Promise.all([
-    isToolInstalled("hermes"),
-    isToolInstalled("pi"),
-    isToolInstalled("zeroclaw"),
-  ]);
-
-  const hermesVersionArgs = [tools.hermes.command, "version"];
-  const piVersionArgs = [tools.pi.command, "--version"];
-  const zcVersionArgs = [tools.zeroclaw.command, "--version"];
-  const zcStatusArgs = [tools.zeroclaw.command, "status"];
-  const piModelsArgs = [tools.pi.command, "--list-models", defaultModel];
-
-  const [hermesVersion, piVersion, zcVersion, zcStatus, piModels] = await Promise.all([
-    hermesInstalled ? runCommand(hermesVersionArgs, { timeout: 30 }) : Promise.resolve(emptyRunResult(hermesVersionArgs)),
-    piInstalled ? runCommand(piVersionArgs, { timeout: 30 }) : Promise.resolve(emptyRunResult(piVersionArgs)),
-    zcInstalled ? runCommand(zcVersionArgs, { timeout: 30 }) : Promise.resolve(emptyRunResult(zcVersionArgs)),
-    zcInstalled ? runCommand(zcStatusArgs, { timeout: 30 }) : Promise.resolve(emptyRunResult(zcStatusArgs)),
-    piInstalled ? runCommand(piModelsArgs, { timeout: 12 }) : Promise.resolve(emptyRunResult(piModelsArgs)),
-  ]);
+  const entries = await Promise.all(agentDefinitions.map(async (agent) => {
+    const tool = tools[agent.id];
+    const installed = await isToolInstalled(agent.id);
+    const versionArgs = [tool.command, ...agent.versionArgs];
+    const statusArgs = agent.statusArgs ? [tool.command, ...agent.statusArgs] : null;
+    const modelArgs = agent.modelArgs ? [tool.command, ...agent.modelArgs] : null;
+    const [version, status, models] = await Promise.all([
+      installed ? runCommand(versionArgs, { timeout: 30 }) : Promise.resolve(emptyRunResult(versionArgs)),
+      installed && statusArgs ? runCommand(statusArgs, { timeout: 30 }) : Promise.resolve(statusArgs ? emptyRunResult(statusArgs) : null),
+      installed && modelArgs ? runCommand(modelArgs, { timeout: 12 }) : Promise.resolve(modelArgs ? emptyRunResult(modelArgs) : null),
+    ]);
+    return [agent.id, {
+      path: tool.command,
+      source: tool.source,
+      summary: firstLine(version),
+      models: statusOrModelSummary(agent.id, status, models),
+      installed,
+      message: installed ? "" : `설치 필요 또는 ${envNameForTool(agent.id)} 지정 필요`,
+      ok: installed && version.ok,
+    }] as const;
+  }));
 
   const payload: StatusPayload = {
     cwd: defaultCwd,
-    tools: {
-      hermes: {
-        path: tools.hermes.command,
-        source: tools.hermes.source,
-        summary: firstLine(hermesVersion),
-        installed: hermesInstalled,
-        message: hermesInstalled ? "" : `설치 필요 또는 HERMES_BIN 지정 필요`,
-        ok: hermesInstalled && hermesVersion.ok,
-      },
-      pi: {
-        path: tools.pi.command,
-        source: tools.pi.source,
-        summary: firstLine(piVersion),
-        models: (piModels.stdout || piModels.stderr).trim(),
-        installed: piInstalled,
-        message: piInstalled ? "" : `설치 필요 또는 PI_BIN 지정 필요`,
-        ok: piInstalled && piVersion.ok,
-      },
-      zeroclaw: {
-        path: tools.zeroclaw.command,
-        source: tools.zeroclaw.source,
-        summary: firstLine(zcVersion),
-        models: extractZeroclawSummary(zcStatus.stdout),
-        installed: zcInstalled,
-        message: zcInstalled ? "" : `설치 필요 또는 ZEROCLAW_BIN 지정 필요`,
-        ok: zcInstalled && zcVersion.ok,
-      },
-    },
+    agents: agentMetadata(),
+    presets: presetMetadata,
+    tools: Object.fromEntries(entries),
   };
-  cachedStatus = { at: Date.now(), payload };
   return payload;
 }
 
 export function chatCommand(payload: Record<string, unknown>) {
   const agent = String(payload.agent || "pi").toLowerCase();
+  const definition = agentDefinition(agent);
   const prompt = String(payload.prompt || "").trim();
   const thinking = String(payload.thinking || "high").trim();
   const speed = normalizeSpeed(payload.speed);
@@ -345,10 +335,11 @@ export function chatCommand(payload: Record<string, unknown>) {
   const promptForSpeed = speedPrompt(prompt, speed);
 
   if (!prompt) throw new Error("메시지가 비어 있습니다.");
+  if (!definition?.supportsChat) throw new Error(`알 수 없는 에이전트입니다: ${agent}`);
 
-  if (agent === "hermes") {
+  if (definition.chatKind === "hermes") {
     const args = [
-      tools.hermes.command,
+      tools[agent].command,
       "--provider",
       defaultProvider,
       "--model",
@@ -367,10 +358,10 @@ export function chatCommand(payload: Record<string, unknown>) {
     return { args, timeout };
   }
 
-  if (agent === "pi") {
+  if (definition.chatKind === "pi") {
     const piThinking = speed === "fast" ? "minimal" : speed === "balanced" ? "low" : thinking;
     const args = [
-      tools.pi.command,
+      tools[agent].command,
       "--model",
       `${defaultProvider}/${defaultModel}:${piThinking}`,
       "--print",
@@ -388,10 +379,10 @@ export function chatCommand(payload: Record<string, unknown>) {
     return { args, timeout };
   }
 
-  if (agent === "zeroclaw") {
+  if (definition.chatKind === "zeroclaw") {
     return {
       args: [
-        tools.zeroclaw.command,
+        tools[agent].command,
         "agent",
         "--provider",
         defaultProvider,
@@ -412,6 +403,13 @@ export function chatCommand(payload: Record<string, unknown>) {
 function normalizeSpeed(value: unknown) {
   const speed = String(value || "fast").toLowerCase();
   return speed === "balanced" || speed === "deep" ? speed : "fast";
+}
+
+function statusOrModelSummary(agent: string, status: RunResult | null, models: RunResult | null) {
+  if (agent === "zeroclaw" && status) return extractZeroclawSummary(status.stdout || status.stderr);
+  if (models) return (models.stdout || models.stderr).trim();
+  if (status) return firstNonEmpty(status.stdout || status.stderr);
+  return "";
 }
 
 function speedPrompt(prompt: string, speed: string) {

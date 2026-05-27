@@ -1,0 +1,64 @@
+input,
+textarea,
+select {
+  width: 100%;
+  background: #0f1113;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  font: inherit;
+  outline: none;
+}
+
+textarea {
+  min-height: 170px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent-2);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.panel:focus-visible,
+.output-list:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+input.invalid,
+textarea.invalid {
+  border-color: var(--danger);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: var(--muted);
+}
+
+.check-row input {
+  width: auto;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+  min-height: 16px;
+  margin-top: 5px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(150px, 170px);
+  gap: 10px;
+}

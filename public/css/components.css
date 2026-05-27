@@ -1,0 +1,266 @@
+.chat-panel {
+  border-color: rgba(92, 200, 167, .32);
+  background: var(--panel-strong);
+}
+
+.agent {
+  display: grid;
+  gap: 7px;
+  min-height: 0;
+}
+
+.agent h2,
+.panel h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.status {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  display: inline-block;
+  flex: 0 0 auto;
+  box-shadow: 0 0 8px rgba(255, 129, 122, .5);
+}
+
+.status.ok {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(92, 200, 167, .6);
+}
+
+.status-list {
+  gap: 7px;
+  align-content: start;
+}
+
+.status-summary-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.segmented {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: min(330px, 100%);
+  min-width: 0;
+  position: relative;
+}
+
+.segmented button {
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: #141719;
+  position: relative;
+  transform: none;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button:hover {
+  background: #182024;
+}
+
+.segmented button.active {
+  background: #203831;
+  color: #ddfff5;
+}
+
+.segmented button.active::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(92, 200, 167, .7);
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.manage-details {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  align-self: start;
+}
+
+.manage-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: var(--radius);
+  padding: 0 4px;
+}
+
+.manage-details summary:hover {
+  color: var(--text);
+}
+
+.manage-details[open] summary {
+  margin-bottom: 8px;
+}
+
+.run-status {
+  min-width: 86px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(237, 241, 243, .25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin .8s linear infinite;
+}
+
+.key-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: .75;
+}
+
+.run-banner {
+  border: 1px solid rgba(117, 167, 255, .35);
+  border-radius: var(--radius);
+  background: #142033;
+  color: #dfeaff;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  font-size: 13px;
+}
+
+.run-list {
+  display: grid;
+  gap: 8px;
+}
+
+.run-empty {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}
+
+.run-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #121619;
+}
+
+.run-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.run-main strong,
+.run-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-badge {
+  min-width: 38px;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 11px;
+  text-align: center;
+  background: #1b2735;
+  color: #dfeaff;
+  border: 1px solid rgba(117, 167, 255, .32);
+}
+
+.run-badge.ok {
+  background: #143126;
+  color: #d9fff3;
+  border-color: rgba(92, 200, 167, .38);
+}
+
+.run-badge.error {
+  background: #351d1c;
+  color: #ffd8d5;
+  border-color: rgba(255, 129, 122, .38);
+}
+
+.run-badge.stopped {
+  background: #332813;
+  color: #ffe5ad;
+  border-color: rgba(255, 208, 112, .38);
+}
+
+.run-badge.waiting_input {
+  background: #2f2540;
+  color: #eadcff;
+  border-color: rgba(177, 139, 255, .42);
+}
+
+.run-input {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.run-input input {
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.snapshot-dialog {
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-strong);
+  color: var(--text);
+  padding: 14px;
+}
+
+.snapshot-dialog::backdrop {
+  background: rgba(0, 0, 0, .58);
+}
+
+.snapshot-body {
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #0c0e10;
+  color: #e7ecef;
+  white-space: pre-wrap;
+}

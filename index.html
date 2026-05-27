@@ -10,7 +10,10 @@
 <body>
   <header>
     <h1>Agent Console</h1>
-    <button id="refreshBtn" type="button">새로고침</button>
+    <div class="row">
+      <button id="snapshotBtn" type="button">스냅샷</button>
+      <button id="refreshBtn" type="button">새로고침</button>
+    </div>
   </header>
 
   <main>
@@ -29,25 +32,20 @@
         <div id="statusList" class="stack status-list" aria-live="polite"></div>
       </div>
 
+      <div class="panel stack" tabindex="0" aria-labelledby="runsHeading">
+        <div class="row panel-head">
+          <h2 id="runsHeading">최근 실행</h2>
+          <button id="refreshRunsBtn" class="compact" type="button">갱신</button>
+        </div>
+        <div id="runList" class="run-list" aria-live="polite"></div>
+      </div>
+
       <div class="panel stack" id="managePanel" tabindex="0" aria-labelledby="manageHeading">
         <h2 id="manageHeading">관리</h2>
         <button class="primary" data-update="all" type="button">전체 업데이트</button>
         <details class="manage-details">
           <summary>개별 작업</summary>
-          <div class="preset-grid">
-            <button data-update="hermes" type="button">Hermes 업데이트</button>
-            <button data-update="pi" type="button">Pi 업데이트</button>
-            <button data-update="zeroclaw" type="button">ZeroClaw 업데이트</button>
-            <button data-preset="hermes_status">Hermes 상태</button>
-            <button data-preset="hermes_config">Hermes 설정</button>
-            <button data-preset="hermes_skills">Hermes 스킬</button>
-            <button data-preset="hermes_tools">Hermes 도구</button>
-            <button data-preset="hermes_logs">Hermes 로그</button>
-            <button data-preset="pi_models">Pi 모델</button>
-            <button data-preset="pi_packages">Pi 패키지</button>
-            <button data-preset="zeroclaw_status">ZeroClaw 상태</button>
-            <button data-preset="zeroclaw_doctor">ZeroClaw 진단</button>
-          </div>
+          <div class="preset-grid" id="presetGrid"></div>
         </details>
       </div>
     </aside>
@@ -58,11 +56,7 @@
       <div class="panel stack chat-panel" tabindex="0" aria-labelledby="chatHeading">
         <div class="row panel-head chat-head">
           <h2 id="chatHeading">채팅</h2>
-          <div class="segmented" role="tablist" aria-label="채팅 에이전트 선택">
-            <button class="agentChoice active" data-agent="pi" type="button" role="tab" aria-selected="true" tabindex="0">Pi</button>
-            <button class="agentChoice" data-agent="hermes" type="button" role="tab" aria-selected="false" tabindex="-1">Hermes</button>
-            <button class="agentChoice" data-agent="zeroclaw" type="button" role="tab" aria-selected="false" tabindex="-1">ZeroClaw</button>
-          </div>
+          <div class="segmented" id="agentTabs" role="tablist" aria-label="채팅 에이전트 선택"></div>
         </div>
         <div id="activeRunBanner" class="run-banner" aria-live="polite" hidden></div>
 
@@ -81,6 +75,9 @@
                 <option value="summarize">폴더 요약</option>
                 <option value="test">테스트 진단</option>
                 <option value="fix">오류 분석</option>
+                <option value="bugAudit">잠재 버그/성능 감사</option>
+                <option value="uxAudit">UI/UX 감사</option>
+                <option value="ideas">기능 아이디어</option>
               </select>
             </div>
             <div>
@@ -104,6 +101,10 @@
               <label for="timeout">제한 시간(초)</label>
               <input id="timeout" type="number" min="30" max="3600" value="600">
             </div>
+            <label class="check-row" for="interactiveInput">
+              <input id="interactiveInput" type="checkbox">
+              <span>stdin 허용</span>
+            </label>
             <div class="send-actions">
               <button class="primary" id="sendBtn" type="button" title="Ctrl+Enter로 보내기, Alt+Up/Down으로 프롬프트 히스토리"><span>보내기</span><span class="key-hint">Ctrl+Enter</span></button>
               <button class="secondary-danger" id="inlineStopBtn" type="button" disabled>중단 Esc</button>
@@ -125,7 +126,13 @@
       </div>
     </section>
   </main>
-  <script src="/app.js" defer></script>
+  <dialog id="snapshotDialog" class="snapshot-dialog">
+    <div class="row panel-head">
+      <h2>스냅샷</h2>
+      <button id="closeSnapshotBtn" type="button">닫기</button>
+    </div>
+    <pre id="snapshotBody" class="snapshot-body" tabindex="0"></pre>
+  </dialog>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>
-
