@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { defaultCwd, defaultModel, defaultProvider, host, port, root } from "./config";
@@ -39,6 +39,11 @@ type ActiveRun = {
 
 const stateDir = join(root, ".agent-console");
 const ledgerPath = join(stateDir, "runs.jsonl");
+export const DEFAULT_RUN_HISTORY_LIMIT = 30;
+export const MAX_RUN_HISTORY_LIMIT = 100;
+const RUN_LOOKUP_LIMIT = 200;
+const LEDGER_TAIL_CHUNK_BYTES = 64 * 1024;
+const LEDGER_TAIL_MAX_BYTES = 1024 * 1024;
 const activeRuns = new Map<string, ActiveRun>();
 const eventEncoder = new TextEncoder();
 const eventClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
@@ -159,14 +164,21 @@ export function listActiveRuns() {
   return Array.from(activeRuns.values()).map(({ record }) => ({ ...record }));
 }
 
-export function listRecentRuns(limit = 30) {
-  return [...readLedger(limit), ...listActiveRuns()].slice(-limit).reverse();
+export function normalizeRunHistoryLimit(value: unknown, fallback = DEFAULT_RUN_HISTORY_LIMIT, max = MAX_RUN_HISTORY_LIMIT) {
+  const parsed = typeof value === "number" ? value : Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+export function listRecentRuns(limit: unknown = DEFAULT_RUN_HISTORY_LIMIT) {
+  const normalizedLimit = normalizeRunHistoryLimit(limit);
+  return [...readLedger(normalizedLimit), ...listActiveRuns()].slice(-normalizedLimit).reverse();
 }
 
 export function getRun(id: string) {
   const active = activeRuns.get(id);
   if (active) return { ...active.record };
-  return readLedger(200).reverse().find((record) => record.id === id) || null;
+  return readLedger(RUN_LOOKUP_LIMIT).reverse().find((record) => record.id === id) || null;
 }
 
 export async function snapshotPayload() {
@@ -319,11 +331,49 @@ function looksLikeInputPrompt(text: string) {
 function readLedger(limit: number) {
   try {
     if (!existsSync(ledgerPath)) return [];
-    const lines = readFileSync(ledgerPath, "utf8").trim().split(/\r?\n/).filter(Boolean);
-    return lines.slice(-limit).map((line) => JSON.parse(line) as RunRecord);
+    return readRecentLedgerLines(limit).map((line) => JSON.parse(line) as RunRecord);
   } catch {
     return [];
   }
+}
+
+function readRecentLedgerLines(limit: number) {
+  const normalizedLimit = normalizeRunHistoryLimit(limit, DEFAULT_RUN_HISTORY_LIMIT, RUN_LOOKUP_LIMIT);
+  const stat = statSync(ledgerPath);
+  const fd = openSync(ledgerPath, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let position = stat.size;
+    let bytesReadTotal = 0;
+    let newlineCount = 0;
+
+    while (position > 0 && bytesReadTotal < LEDGER_TAIL_MAX_BYTES && newlineCount <= normalizedLimit) {
+      const bytesToRead = Math.min(LEDGER_TAIL_CHUNK_BYTES, position, LEDGER_TAIL_MAX_BYTES - bytesReadTotal);
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      position -= bytesToRead;
+      const bytesRead = readSync(fd, buffer, 0, bytesToRead, position);
+      if (bytesRead <= 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      chunks.unshift(chunk);
+      bytesReadTotal += bytesRead;
+      newlineCount += countNewlines(chunk);
+    }
+
+    const text = Buffer.concat(chunks).toString("utf8");
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    if (position > 0 && lines.length > 0) lines.shift();
+    return lines.slice(-normalizedLimit);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function countNewlines(buffer: Buffer) {
+  let count = 0;
+  for (const byte of buffer) {
+    if (byte === 10) count += 1;
+  }
+  return count;
 }
 
 function runId() {

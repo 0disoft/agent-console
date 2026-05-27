@@ -56,14 +56,7 @@ async function startHermesGateway() {
 
   const script = join(home, "AppData", "Local", "hermes", "gateway-service", "Hermes_Gateway.vbs");
   if (!existsSync(script)) return null;
-  return runCommand([
-    "powershell",
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    `Start-Process -FilePath 'wscript.exe' -ArgumentList '"${script}"' -WindowStyle Hidden`,
-  ], { cwd: defaultCwd, timeout: 30 });
+  return runCommand(["wscript.exe", script], { cwd: defaultCwd, timeout: 30 });
 }
 
 export async function updateAgent(target: string, cwd?: string, signal?: AbortSignal) {
@@ -105,55 +98,13 @@ async function updateZeroclaw(cwd?: string, signal?: AbortSignal) {
   if (first.ok || !combined.includes("architecture mismatch")) {
     return first;
   }
-  if (process.platform !== "win32") {
-    return {
-      ...first,
-      stderr: [
-        first.stderr,
-        "Automatic GitHub release fallback is currently Windows-only. Please update ZeroClaw manually on this OS.",
-      ].filter(Boolean).join("\n"),
-    };
-  }
-
-  const fallback = await installZeroclawWindowsRelease(cwd, signal);
-  return mergeRetryResult(
-    first,
-    fallback,
-    "ZeroClaw updater selected the wrong architecture. Retrying with the Windows x86_64 GitHub release asset.",
-  );
-}
-
-async function installZeroclawWindowsRelease(cwd?: string, signal?: AbortSignal) {
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "$ProgressPreference = 'SilentlyContinue'",
-    "$tempRoot = Join-Path $env:TEMP ('zeroclaw-update-' + [guid]::NewGuid().ToString('N'))",
-    "try {",
-    "$url = 'https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/zeroclaw-x86_64-pc-windows-msvc.zip'",
-    "New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null",
-    "$zip = Join-Path $tempRoot 'zeroclaw.zip'",
-    "Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing",
-    "Expand-Archive -LiteralPath $zip -DestinationPath $tempRoot -Force",
-    "$exe = Get-ChildItem -LiteralPath $tempRoot -Recurse -Filter zeroclaw.exe | Select-Object -First 1",
-    "if (-not $exe) { throw 'Downloaded archive did not contain zeroclaw.exe' }",
-    "$destDir = Join-Path $env:USERPROFILE '.cargo\\bin'",
-    "New-Item -ItemType Directory -Force -Path $destDir | Out-Null",
-    "$dest = Join-Path $destDir 'zeroclaw.exe'",
-    "Get-Process -Name zeroclaw -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-    "Start-Sleep -Milliseconds 300",
-    "if (Test-Path $dest) { Copy-Item -LiteralPath $dest -Destination ($dest + '.bak.' + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force }",
-    "Copy-Item -LiteralPath $exe.FullName -Destination $dest -Force",
-    "& $dest --version",
-    "} finally {",
-    "if (Test-Path $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }",
-    "}",
-  ].join("\n");
-
-  return runCommand(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
-    cwd,
-    timeout: 1800,
-    signal,
-  });
+  return {
+    ...first,
+    stderr: [
+      first.stderr,
+      "Automatic ZeroClaw release fallback download is disabled because unsigned remote executables must not be installed or run. Install a trusted Windows build manually, then retry.",
+    ].filter(Boolean).join("\n"),
+  };
 }
 
 function mergeRetryResult(first: RunResult, second: RunResult, note: string): RunResult {

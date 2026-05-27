@@ -27,6 +27,7 @@ import {
   getRun,
   handleWebSocketMessage,
   listRecentRuns,
+  normalizeRunHistoryLimit,
   registerWebSocket,
   sendRunInput,
   snapshotPayload,
@@ -70,7 +71,7 @@ export function startServer() {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
       if (request.method === "GET" && url.pathname === "/api/runs") {
-        return jsonResponse({ runs: listRecentRuns(Number(url.searchParams.get("limit") || 30)) });
+        return jsonResponse({ runs: listRecentRuns(normalizeRunHistoryLimit(url.searchParams.get("limit"))) });
       }
       if (request.method === "GET" && url.pathname.startsWith("/api/runs/")) {
         const id = url.pathname.split("/").at(-1) || "";
