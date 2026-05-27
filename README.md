@@ -74,22 +74,48 @@ AGENT_CONSOLE_PROVIDER="openai-codex" AGENT_CONSOLE_MODEL="gpt-5.5" bun run star
 ## 편의 기능
 
 - 출력 기록과 최근 작업 폴더는 브라우저 `localStorage`에만 저장됩니다. 저장소에 올라가는 파일에는 개인 경로나 실행 로그가 포함되지 않습니다.
-- 채팅 입력 옆의 프롬프트 템플릿으로 코드 리뷰, 폴더 요약, 테스트 진단, 오류 분석 요청을 빠르게 채울 수 있습니다.
+- 채팅 입력 옆의 프롬프트 템플릿으로 코드 리뷰, 폴더 요약, 테스트 진단, 오류 분석, 잠재 버그/성능 감사, UI/UX 감사, 기능 아이디어 요청을 빠르게 채울 수 있습니다.
 - 채팅 응답은 실시간 스트리밍으로 출력됩니다. 에이전트나 CLI가 중간 출력을 flush하지 않으면 마지막에 한 번에 보일 수 있습니다.
+- 사이드바의 `최근 실행` 패널에서 진행 중/완료/오류/중단된 실행을 확인하고, 진행 중인 실행은 바로 중단할 수 있습니다.
+- `stdin 허용`을 켠 실행은 CLI 표준입력 파이프를 열고, `최근 실행` 패널에서 stdin 텍스트를 전송할 수 있습니다. 출력에서 승인/계속 여부를 묻는 패턴이 감지되면 상태가 `대기`로 바뀝니다. 기본값은 꺼짐입니다. 일부 CLI는 stdin이 열린 상태에서 종료를 기다리기 때문에 필요할 때만 켜세요.
+- 헤더의 `스냅샷` 버튼은 Codex 같은 외부 자동화가 보는 것과 같은 서버/에이전트/실행 상태 JSON을 보여줍니다.
 - 출력 블록은 안전한 일부 마크다운 렌더링과 복사 버튼을 지원합니다. 긴 출력은 위로 스크롤해 읽는 동안 자동 하단 스크롤이 잠시 멈춥니다.
 - 메시지는 `Ctrl+Enter`로 보낼 수 있고, `Alt+Up` / `Alt+Down`으로 최근 프롬프트를 다시 불러올 수 있습니다.
 - 실행 중에는 같은 영역의 `중단 Esc` 버튼이나 `Esc` 키로 중단할 수 있습니다.
 - 긴 작업이 끝났을 때 브라우저 알림 권한이 허용되어 있으면 완료 알림을 보냅니다.
 
+## Codex용 관측 API
+
+Codex 같은 로컬 자동화 도구가 Agent Console 상태를 구조적으로 읽을 수 있도록 JSON API를 제공합니다.
+
+- `GET /api/snapshot`: 서버 설정, 에이전트 상태, 진행 중 실행, 최근 실행, 진단 이슈를 한 번에 반환합니다.
+- `GET /api/events`: 실행 시작/명령 확인/완료/중단 요청을 Server-Sent Events로 실시간 전송합니다.
+- `GET /api/ws`: WebSocket으로 동일한 실행 이벤트를 받고, `{"type":"stop","runId":"..."}` 또는 `{"type":"input","runId":"...","text":"y\n"}` 메시지로 실행을 제어합니다.
+- `GET /api/runs?limit=30`: 최근 실행 이력을 반환합니다.
+- `GET /api/runs/<runId>`: 특정 실행 기록을 반환합니다.
+- `POST /api/runs/<runId>/stop`: 진행 중인 실행을 중단합니다.
+- `POST /api/runs/<runId>/input`: 진행 중인 실행의 stdin에 텍스트를 씁니다. 기본적으로 개행을 붙이며, `{ "newline": false }`로 끌 수 있습니다.
+
+완료된 실행 이력은 `.agent-console/runs.jsonl`에 JSONL로 저장됩니다. 이 폴더는 로컬 런타임 상태라서 Git에는 포함하지 않습니다.
+
+## 에이전트 추가 구조
+
+Hermes, Pi, ZeroClaw는 [src/server/config.ts](src/server/config.ts)의 `agentDefinitions`에 정의되어 있습니다. 새 CLI 에이전트를 추가할 때는 이 목록에 `id`, 표시 이름, 실행 파일 탐색 정보, 업데이트 명령, 상태/버전 명령, 프리셋을 추가하는 방식으로 확장합니다.
+
+프론트엔드는 `/api/status`가 내려주는 `agents`와 `presets` 메타데이터를 기준으로 채팅 탭과 관리 버튼을 자동 생성합니다. 새 에이전트가 기존 Hermes/Pi/ZeroClaw와 다른 채팅 CLI 형식을 쓰면 [src/server/agents.ts](src/server/agents.ts)의 `chatCommand()`에 해당 `chatKind` 처리만 추가하면 됩니다.
+
 ## 구성
 
 - `index.html`: 화면 뼈대
-- `public/app.css`: 화면 스타일
-- `public/app.js`: 브라우저 UI 로직
+- `public/app.css`: 화면 스타일 엔트리포인트
+- `public/css/`: 화면 스타일 모듈
+- `public/app.js`: 브라우저 엔트리포인트
+- `public/js/`: 브라우저 UI 모듈
 - `server.ts`: 서버 엔트리포인트
-- `src/server/config.ts`: 경로, 모델, 도구 설정
+- `src/server/config.ts`: 에이전트 정의, 경로, 모델, 도구 설정
 - `src/server/process.ts`: CLI 실행/스트리밍 공통 로직
 - `src/server/agents.ts`: Hermes, Pi, ZeroClaw 상태/채팅/업데이트 로직
+- `src/server/runs.ts`: 실행 이력, 진행 중 실행, snapshot API 상태
 - `src/server/http.ts`: HTTP 라우팅과 정적 파일 서빙
 - `launch.ps1`: 서버 실행
 - `start.cmd`: 더블클릭 실행용
