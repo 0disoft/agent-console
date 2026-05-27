@@ -17,6 +17,7 @@ auth*.json
 logs/
 tmp/
 temp/
+.agent-console/
 *.pid
 *.lock
 
