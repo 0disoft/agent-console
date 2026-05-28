@@ -3,11 +3,9 @@ import {
   append,
   appendBlock,
   applyOutputFilter,
-  persistOutputHistory,
-  renderOutputText,
-  truncateStoredText,
+  updateOutputBlock,
 } from "./output.js";
-import { maxOutputBlocks, state } from "./state.js";
+import { state } from "./state.js";
 import { rememberCwd, rememberPrompt } from "./storage.js";
 import { agentName, stripAnsi } from "./text.js";
 import { renderCwdHistory } from "./history.js";
@@ -217,7 +215,7 @@ export async function postJson(path, payload, button) {
   requestNotificationPermission();
   setRequestRunning(controller, button, requestLabel(path, payload));
   setButtonBusy(button, true);
-  appendBlock(`${payload.agent ? agentName(payload.agent) : "관리 작업"} 요청을 보냈습니다.`, "running", undefined, false);
+  const block = appendBlock(`${payload.agent ? agentName(payload.agent) : "관리 작업"} 요청을 보냈습니다.`, "running", undefined, false);
   try {
     const res = await fetch(path, {
       method: "POST",
@@ -233,12 +231,14 @@ export async function postJson(path, payload, button) {
       data.stderr ? `${data.ok ? "보조 출력" : "오류"}:\n${data.stderr}` : "",
       data.code !== undefined && data.code !== null ? `종료 코드: ${data.code}` : "",
     ].filter(Boolean).join("\n\n");
-    appendBlock(body || JSON.stringify(data, null, 2), data.ok ? "ok" : "error");
+    updateOutputBlock(block, body || JSON.stringify(data, null, 2), data.ok ? "ok" : "error");
     notifyCompletion(data.ok ? "Agent Console 완료" : "Agent Console 오류", `${payload.agent ? agentName(payload.agent) : "관리 작업"} 실행이 끝났습니다.`, startedAt);
   } catch (error) {
     const abortedByUser = state.abortedControllers.has(controller);
     if (!(controller.signal.aborted && abortedByUser)) {
-      appendBlock(controller.signal.aborted ? "요청이 중단되었습니다." : `요청 실패\n${error}`, controller.signal.aborted ? "warning" : "error");
+      updateOutputBlock(block, controller.signal.aborted ? "요청이 중단되었습니다." : `요청 실패\n${error}`, controller.signal.aborted ? "warning" : "error");
+    } else {
+      updateOutputBlock(block, "요청이 중단되었습니다.", "warning");
     }
     notifyCompletion("Agent Console 중단", controller.signal.aborted ? "요청이 중단되었습니다." : "요청이 실패했습니다.", startedAt);
   } finally {
@@ -296,54 +296,19 @@ async function postStreamJson(path, payload, button) {
     parseStreamLine(buffer, handleStreamEvent);
     cancelStreamFlush();
     const resultText = formatStreamResult(finalData, command, cwdValue, stdout, stderr);
-    block.className = `output-block ${finalData?.ok ? "ok" : "error"}`;
-    const labelNode = block.querySelector(".output-head > span");
-    if (labelNode) labelNode.textContent = finalData?.ok ? "완료" : "오류";
-    renderOutputText(bodyNode, resultText);
-    block.dataset.searchText = `${labelNode?.textContent || ""}\n${resultText}`.toLowerCase();
-    applyOutputFilter();
-    state.outputHistory.push({
-      type: finalData?.ok ? "ok" : "error",
-      label: finalData?.ok ? "완료" : "오류",
-      stamp: new Date().toLocaleTimeString(),
-      text: truncateStoredText(resultText),
-    });
-    state.outputHistory = state.outputHistory.slice(-maxOutputBlocks);
-    persistOutputHistory();
+    updateOutputBlock(block, resultText, finalData?.ok ? "ok" : "error", finalData?.ok ? "완료" : "오류");
     notifyCompletion(finalData?.ok ? "Agent Console 완료" : "Agent Console 오류", `${agentName(payload.agent)} 실행이 끝났습니다.`, startedAt);
   } catch (error) {
     const abortedByUser = state.abortedControllers.has(controller);
     if (!(controller.signal.aborted && abortedByUser)) {
-      block.className = "output-block error";
       const errorText = controller.signal.aborted ? "요청이 중단되었습니다." : `요청 실패\n${error}`;
       cancelStreamFlush();
-      renderOutputText(bodyNode, errorText);
-      block.dataset.searchText = `오류\n${errorText}`.toLowerCase();
-      applyOutputFilter();
-      state.outputHistory.push({
-        type: controller.signal.aborted ? "warning" : "error",
-        label: controller.signal.aborted ? "알림" : "오류",
-        stamp: new Date().toLocaleTimeString(),
-        text: truncateStoredText(errorText),
-      });
-      state.outputHistory = state.outputHistory.slice(-maxOutputBlocks);
-      persistOutputHistory();
+      updateOutputBlock(block, errorText, controller.signal.aborted ? "warning" : "error", controller.signal.aborted ? "알림" : "오류");
     } else {
       const partialText = formatStreamResult({ code: null, ok: false }, command, cwdValue, stdout, `${stderr}${stderr ? "\n" : ""}[사용자에 의해 중단됨]`);
-      block.className = "output-block warning";
       const stoppedText = partialText || "[사용자에 의해 중단됨]";
       cancelStreamFlush();
-      renderOutputText(bodyNode, stoppedText);
-      block.dataset.searchText = `중단됨\n${stoppedText}`.toLowerCase();
-      applyOutputFilter();
-      state.outputHistory.push({
-        type: "warning",
-        label: "중단됨",
-        stamp: new Date().toLocaleTimeString(),
-        text: truncateStoredText(stoppedText),
-      });
-      state.outputHistory = state.outputHistory.slice(-maxOutputBlocks);
-      persistOutputHistory();
+      updateOutputBlock(block, stoppedText, "warning", "중단됨");
     }
     notifyCompletion("Agent Console 중단", controller.signal.aborted ? "요청이 중단되었습니다." : "요청이 실패했습니다.", startedAt);
   } finally {
@@ -373,6 +338,7 @@ async function postStreamJson(path, payload, button) {
     streamFlushId = requestAnimationFrame(() => {
       const visibleText = stripAnsi([stdout, stderr ? `\n오류:\n${stderr}` : ""].filter(Boolean).join(""));
       bodyNode.textContent = visibleText;
+      block.dataset.outputText = visibleText;
       block.dataset.searchText = `실시간 출력\n${visibleText}`.toLowerCase();
       applyOutputFilter();
       if (state.outputPinned) els.output.scrollTop = els.output.scrollHeight;

@@ -31,6 +31,7 @@ export function appendBlock(text, type = "info", label = typeLabel(type), persis
 export function renderOutputBlock(entry) {
   const block = document.createElement("article");
   block.className = `output-block ${entry.type || "info"}`;
+  block.dataset.outputText = String(entry.text || "");
   block.dataset.searchText = [
     entry.label || typeLabel(entry.type || "info"),
     entry.stamp || "",
@@ -49,7 +50,7 @@ export function renderOutputBlock(entry) {
   copy.className = "copy-output";
   copy.type = "button";
   copy.textContent = "복사";
-  copy.addEventListener("click", () => copyOutputText(entry.text || "", copy));
+  copy.addEventListener("click", () => copyOutputText(block.dataset.outputText || "", copy));
   right.append(stamp, copy);
   head.append(left, right);
 
@@ -72,6 +73,32 @@ export function renderOutputBlock(entry) {
   });
   applyOutputFilter();
   return block;
+}
+
+export function updateOutputBlock(block, text, type = "info", label = typeLabel(type), persist = true) {
+  const cleanText = stripAnsi(String(text || ""));
+  const labelNode = block.querySelector(".output-head > span");
+  const bodyNode = block.querySelector(".output-body");
+  const stamp = block.querySelector(".output-actions > span");
+  const entry = {
+    type,
+    label,
+    stamp: stamp?.textContent || new Date().toLocaleTimeString(),
+    text: cleanText,
+  };
+
+  block.className = `output-block ${type || "info"}`;
+  if (labelNode) labelNode.textContent = label || typeLabel(type);
+  if (bodyNode) renderOutputText(bodyNode, cleanText);
+  block.dataset.outputText = cleanText;
+  block.dataset.searchText = [entry.label, entry.stamp, cleanText].join("\n").toLowerCase();
+  applyOutputFilter();
+
+  if (persist) {
+    state.outputHistory.push({ ...entry, text: truncateStoredText(cleanText) });
+    state.outputHistory = state.outputHistory.slice(-maxOutputBlocks);
+    persistOutputHistory();
+  }
 }
 
 export function renderOutputText(node, text) {
