@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { agentMetadata, updateTargets } from "../src/server/config";
 import { MAX_RUN_HISTORY_LIMIT, normalizeRunHistoryLimit } from "../src/server/runs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -28,13 +29,22 @@ describe("security regressions", () => {
     expect(source).toContain("readRecentLedgerLines");
   });
 
-  test("ZeroClaw update path does not install unsigned GitHub release fallback", () => {
+  test("ZeroClaw update path uses a verified GitHub release updater", () => {
     const source = readProjectFile("src/server/agents.ts");
+    const updater = readProjectFile("scripts/update-zeroclaw-windows.ps1");
+    const zeroclaw = agentMetadata().find((agent) => agent.id === "zeroclaw");
 
+    expect(zeroclaw?.supportsUpdate).toBe(process.platform === "win32");
+    if (process.platform === "win32") {
+      expect(updateTargets.zeroclaw.some((arg) => arg.includes("update-zeroclaw-windows.ps1"))).toBe(true);
+    }
+    expect(updater).toContain("zeroclaw-labs/zeroclaw");
+    expect(updater).toContain("SHA256SUMS");
+    expect(updater).toContain("Get-FileHash -Algorithm SHA256");
+    expect([...updater].every((char) => char.charCodeAt(0) < 128)).toBe(true);
     expect(source).not.toContain("releases/latest/download");
     expect(source).not.toContain("Invoke-WebRequest");
     expect(source).not.toContain("Copy-Item -LiteralPath $exe.FullName");
-    expect(source).toContain("unsigned remote executables must not be installed or run");
   });
 
   test("Windows stop helper delegates to a script instead of interpolating the batch path into PowerShell source", () => {

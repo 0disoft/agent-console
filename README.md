@@ -1,7 +1,7 @@
 # Agent Console
 
 로컬에 설치된 Hermes, Pi, ZeroClaw를 한 화면에서 상태 확인하고 단발 채팅으로 실행하는 Bun 기반 도구입니다.
-관리 영역에서 세 에이전트를 개별 또는 전체 업데이트할 수 있습니다.
+관리 영역에서 업데이트 명령을 제공하는 에이전트를 개별 또는 전체 업데이트할 수 있습니다.
 
 ## 실행
 
@@ -69,7 +69,7 @@ bun run start
 AGENT_CONSOLE_PROVIDER="openai-codex" AGENT_CONSOLE_MODEL="gpt-5.5" bun run start
 ```
 
-설치되지 않은 에이전트는 상태가 `설치 안 됨`으로 표시되고, 해당 채팅/관리/업데이트 버튼은 자동으로 비활성화됩니다. `전체 업데이트`는 설치된 에이전트만 대상으로 실행됩니다.
+설치되지 않은 에이전트는 상태가 `설치 안 됨`으로 표시되고, 해당 채팅/관리/업데이트 버튼은 자동으로 비활성화됩니다. `전체 업데이트`는 설치되어 있고 Agent Console에 업데이트 명령이 등록된 에이전트만 대상으로 실행됩니다. ZeroClaw는 자체 `update` 서브커맨드 대신 공식 GitHub 릴리스의 Windows prebuilt asset을 내려받아 `SHA256SUMS`로 검증한 뒤 `~/.zeroclaw/bin/zeroclaw.exe`에 설치합니다.
 
 ## 편의 기능
 
@@ -101,7 +101,7 @@ Codex 같은 로컬 자동화 도구가 Agent Console 상태를 구조적으로 
 
 ## 에이전트 추가 구조
 
-Hermes, Pi, ZeroClaw는 [src/server/config.ts](src/server/config.ts)의 `agentDefinitions`에 정의되어 있습니다. 새 CLI 에이전트를 추가할 때는 이 목록에 `id`, 표시 이름, 실행 파일 탐색 정보, 업데이트 명령, 상태/버전 명령, 프리셋을 추가하는 방식으로 확장합니다.
+Hermes, Pi, ZeroClaw는 [src/server/config.ts](src/server/config.ts)의 `agentDefinitions`에 정의되어 있습니다. 새 CLI 에이전트를 추가할 때는 이 목록에 `id`, 표시 이름, 실행 파일 탐색 정보, 상태/버전 명령, 프리셋을 추가하는 방식으로 확장합니다. 해당 CLI가 실제 업데이트 명령을 제공할 때만 `updateArgs`를 추가하세요.
 
 프론트엔드는 `/api/status`가 내려주는 `agents`와 `presets` 메타데이터를 기준으로 채팅 탭과 관리 버튼을 자동 생성합니다. 새 에이전트가 기존 Hermes/Pi/ZeroClaw와 다른 채팅 CLI 형식을 쓰면 [src/server/agents.ts](src/server/agents.ts)의 `chatCommand()`에 해당 `chatKind` 처리만 추가하면 됩니다.
 

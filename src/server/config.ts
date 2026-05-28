@@ -21,6 +21,7 @@ export type AgentDefinition = {
   chatKind: "hermes" | "pi" | "zeroclaw";
   supportsChat: boolean;
   supportsThinking?: boolean;
+  updateCommand?: string[];
   updateArgs?: string[];
   versionArgs: string[];
   modelArgs?: string[];
@@ -82,12 +83,15 @@ export const agentDefinitions: AgentDefinition[] = [
     commandName: "zeroclaw",
     envName: "ZEROCLAW_BIN",
     knownPaths: [
+      join(home, ".zeroclaw", "bin", executableName("zeroclaw")),
       join(home, ".cargo", "bin", executableName("zeroclaw")),
       join(home, ".local", "bin", "zeroclaw"),
     ],
     chatKind: "zeroclaw",
     supportsChat: true,
-    updateArgs: ["update", "--force"],
+    updateCommand: process.platform === "win32"
+      ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "scripts", "update-zeroclaw-windows.ps1")]
+      : undefined,
     versionArgs: ["--version"],
     statusArgs: ["status"],
     presets: [
@@ -139,8 +143,8 @@ export const presetMetadata = agentDefinitions.flatMap((agent) => (agent.presets
 
 export const updateTargets = Object.fromEntries(
   agentDefinitions
-    .filter((agent) => agent.updateArgs?.length)
-    .map((agent) => [agent.id, [tools[agent.id].command, ...agent.updateArgs!]]),
+    .filter((agent) => agent.updateCommand?.length || agent.updateArgs?.length)
+    .map((agent) => [agent.id, agent.updateCommand || [tools[agent.id].command, ...agent.updateArgs!]]),
 ) as Record<string, string[]>;
 
 export function agentDefinition(id: string) {
@@ -156,7 +160,7 @@ export function agentMetadata() {
     id: agent.id,
     label: agent.label,
     supportsChat: agent.supportsChat,
-    supportsUpdate: Boolean(agent.updateArgs?.length),
+    supportsUpdate: Boolean(agent.updateCommand?.length || agent.updateArgs?.length),
     supportsThinking: Boolean(agent.supportsThinking),
   }));
 }

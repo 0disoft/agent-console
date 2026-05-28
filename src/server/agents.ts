@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   agentDefinition,
   agentDefinitions,
+  agentLabel,
   agentMetadata,
   defaultCwd,
   defaultModel,
@@ -64,9 +65,11 @@ async function startHermesGateway() {
 }
 
 export async function updateAgent(target: string, cwd?: string, signal?: AbortSignal) {
+  if (!(target in updateTargets)) {
+    throw new Error(`${agentLabel(target)}는 Agent Console에서 지원하는 업데이트 명령이 없습니다.`);
+  }
   await assertToolInstalled(target);
   if (target === "hermes") return updateHermes(cwd, signal);
-  if (target === "zeroclaw") return updateZeroclaw(cwd, signal);
   return runCommand(updateTargets[target], { cwd, timeout: 1800, signal });
 }
 
@@ -94,21 +97,6 @@ async function updateHermes(cwd?: string, signal?: AbortSignal) {
       console.warn(`Hermes gateway restart failed: ${startResult.stderr || startResult.stdout}`);
     }
   }
-}
-
-async function updateZeroclaw(cwd?: string, signal?: AbortSignal) {
-  const first = await runCommand(updateTargets.zeroclaw, { cwd, timeout: 1800, signal });
-  const combined = `${first.stdout}\n${first.stderr}`;
-  if (first.ok || !combined.includes("architecture mismatch")) {
-    return first;
-  }
-  return {
-    ...first,
-    stderr: [
-      first.stderr,
-      "Automatic ZeroClaw release fallback download is disabled because unsigned remote executables must not be installed or run. Install a trusted Windows build manually, then retry.",
-    ].filter(Boolean).join("\n"),
-  };
 }
 
 function mergeRetryResult(first: RunResult, second: RunResult, note: string): RunResult {

@@ -117,12 +117,18 @@ export function updateAgentUi() {
 }
 
 export function updateInstallState() {
-  const installedCount = Object.values(state.installedTools).filter(Boolean).length;
+  const updateableInstalledCount = state.agents
+    .filter((agent) => agent.supportsUpdate)
+    .filter((agent) => state.installedTools[agent.id] !== false)
+    .length;
   document.querySelectorAll("[data-update]").forEach((button) => {
     const target = button.dataset.update;
-    const enabled = target === "all" ? installedCount > 0 : state.installedTools[target] !== false;
+    const agent = state.agents.find((item) => item.id === target);
+    const enabled = target === "all"
+      ? updateableInstalledCount > 0
+      : Boolean(agent?.supportsUpdate) && state.installedTools[target] !== false;
     button.disabled = !enabled;
-    button.title = enabled ? "" : "설치된 실행 파일을 찾지 못했습니다.";
+    button.title = enabled ? "" : "업데이트 가능한 설치 항목을 찾지 못했습니다.";
   });
   document.querySelectorAll("[data-preset]").forEach((button) => {
     const enabled = presetEnabled(button.dataset.preset);
