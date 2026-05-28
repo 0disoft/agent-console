@@ -55,18 +55,18 @@ PI_BIN="$HOME/.bun/bin/pi" ZEROCLAW_BIN="$HOME/.cargo/bin/zeroclaw" bun run star
 ```
 
 기본 모델/프로바이더도 환경 변수로 바꿀 수 있습니다.
-기본값은 `AGENT_CONSOLE_PROVIDER=openai-codex`, `AGENT_CONSOLE_MODEL=gpt-5.5`입니다.
+기본값에서는 각 CLI가 자체 설정한 provider/model을 사용합니다. Agent Console에서 강제로 override해야 할 때만 `AGENT_CONSOLE_PROVIDER`, `AGENT_CONSOLE_MODEL`을 지정하세요.
 일부 Windows 네이티브 도구 출력이 깨지면 `AGENT_CONSOLE_OUTPUT_ENCODING=euc-kr`처럼 출력 디코딩을 바꿀 수 있습니다.
 
 ```powershell
-$env:AGENT_CONSOLE_PROVIDER = "openai-codex"
+$env:AGENT_CONSOLE_PROVIDER = "openai"
 $env:AGENT_CONSOLE_MODEL = "gpt-5.5"
 $env:AGENT_CONSOLE_OUTPUT_ENCODING = "utf-8"
 bun run start
 ```
 
 ```bash
-AGENT_CONSOLE_PROVIDER="openai-codex" AGENT_CONSOLE_MODEL="gpt-5.5" bun run start
+AGENT_CONSOLE_PROVIDER="openai" AGENT_CONSOLE_MODEL="gpt-5.5" bun run start
 ```
 
 설치되지 않은 에이전트는 상태가 `설치 안 됨`으로 표시되고, 해당 채팅/관리/업데이트 버튼은 자동으로 비활성화됩니다. `전체 업데이트`는 설치되어 있고 Agent Console에 업데이트 명령이 등록된 에이전트만 대상으로 실행됩니다. ZeroClaw는 자체 `update` 서브커맨드 대신 공식 GitHub 릴리스의 Windows prebuilt asset을 내려받아 `SHA256SUMS`로 검증한 뒤 `~/.zeroclaw/bin/zeroclaw.exe`에 설치합니다.
@@ -78,7 +78,7 @@ AGENT_CONSOLE_PROVIDER="openai-codex" AGENT_CONSOLE_MODEL="gpt-5.5" bun run star
 - 채팅 응답은 실시간 스트리밍으로 출력됩니다. 에이전트나 CLI가 중간 출력을 flush하지 않으면 마지막에 한 번에 보일 수 있습니다.
 - 사이드바의 `최근 실행` 패널에서 진행 중/완료/오류/중단된 실행을 확인하고, 진행 중인 실행은 바로 중단할 수 있습니다. 실행 행을 클릭하면 기록된 명령, 폴더, 소요 시간, 종료 코드 같은 상세 메타데이터를 볼 수 있습니다.
 - `stdin 허용`을 켠 실행은 CLI 표준입력 파이프를 열고, `최근 실행` 패널에서 stdin 텍스트를 전송할 수 있습니다. 출력에서 승인/계속 여부를 묻는 패턴이 감지되면 상태가 `대기`로 바뀝니다. 기본값은 꺼짐입니다. 일부 CLI는 stdin이 열린 상태에서 종료를 기다리기 때문에 필요할 때만 켜세요.
-- 관리 영역의 `자유 설정 적용`은 새 노트북의 Hermes, Pi, ZeroClaw 설정을 이 PC의 개방형 프로파일에 맞춥니다. 기존 설정 파일은 `.bak.YYYYMMDD_HHMMSS` 백업을 남긴 뒤 수정합니다. 함께 적용되는 편의 설정은 Pi의 조용한 시작/긴 캐시/재시도/컴팩션, Hermes의 메모리/프로젝트 관리 스킬, ZeroClaw의 백업/런타임 추적/루프 감지/응답 캐시, 그리고 `~/.agent-console/agent-env.ps1`/`.sh` 환경 헬퍼입니다.
+- 관리 영역의 `자유 설정 적용`은 새 노트북의 Hermes, Pi, ZeroClaw 설정을 이 PC의 개방형 프로파일에 맞춥니다. 기존 설정 파일은 `.bak.YYYYMMDD_HHMMSS` 백업을 남긴 뒤 수정합니다. 함께 적용되는 편의 설정은 Pi의 조용한 시작/긴 캐시/재시도/컴팩션, Hermes의 메모리/프로젝트 관리 스킬, ZeroClaw의 백업/런타임 추적/루프 감지/응답 캐시, 그리고 `~/.agent-console/agent-env.ps1`/`.sh` 환경 헬퍼입니다. Provider/model은 `AGENT_CONSOLE_PROFILE_PROVIDER`, `AGENT_CONSOLE_PROFILE_MODEL`을 지정했을 때만 덮어씁니다.
 - 헤더의 `스냅샷` 버튼은 Codex 같은 외부 자동화가 보는 것과 같은 서버/에이전트/실행 상태 JSON을 보여줍니다.
 - 출력 블록은 안전한 일부 마크다운 렌더링, 검색/필터, 복사 버튼을 지원합니다. 긴 출력은 위로 스크롤해 읽는 동안 자동 하단 스크롤이 잠시 멈춥니다.
 - 메시지는 `Ctrl+Enter`로 보낼 수 있고, `Alt+Up` / `Alt+Down`으로 최근 프롬프트를 다시 불러올 수 있습니다.

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { chatCommand } from "../src/server/agents";
 import { agentMetadata, updateTargets } from "../src/server/config";
 import { MAX_RUN_HISTORY_LIMIT, normalizeRunHistoryLimit } from "../src/server/runs";
 
@@ -64,5 +65,17 @@ describe("security regressions", () => {
     expect(source).toContain("unsafeWriterSids");
     expect(source).toContain("Refusing to use Hermes gateway VBS");
     expect(source).not.toContain("$task.Settings.Hidden = $true");
+  });
+
+  test("chat commands do not force OpenAI Codex unless configured", () => {
+    const pi = chatCommand({ agent: "pi", prompt: "안녕", speed: "fast" }).args;
+    const hermes = chatCommand({ agent: "hermes", prompt: "안녕", speed: "fast" }).args;
+
+    expect(pi).toContain("--thinking");
+    expect(pi).toContain("low");
+    expect(pi).not.toContain("--model");
+    expect(pi.join(" ")).not.toContain("openai-codex/");
+    expect(hermes).not.toContain("--provider");
+    expect(hermes).not.toContain("--model");
   });
 });

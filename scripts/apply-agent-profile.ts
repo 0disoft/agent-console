@@ -7,6 +7,8 @@ const stamp = timestamp();
 const changes: string[] = [];
 const warnings: string[] = [];
 const skipHermes = process.argv.includes("--skip-hermes") || process.env.AGENT_CONSOLE_PROFILE_SKIP_HERMES === "1";
+const profileProvider = process.env.AGENT_CONSOLE_PROFILE_PROVIDER?.trim() || "";
+const profileModel = process.env.AGENT_CONSOLE_PROFILE_MODEL?.trim() || "";
 
 main();
 
@@ -40,18 +42,14 @@ function configureZeroclaw() {
   let text = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   if (!text.trim()) {
     text = [
-      'default_provider = "openai-codex"',
-      'default_model = "gpt-5.5"',
-      "default_temperature = 0.7",
       "provider_timeout_secs = 120",
       "",
     ].join("\n");
   }
   backupIfExists(configPath);
 
-  text = setTomlValue(text, null, "default_provider", tomlString("openai-codex"));
-  text = setTomlValue(text, null, "default_model", tomlString("gpt-5.5"));
-  text = setTomlValue(text, null, "default_temperature", "0.7");
+  if (profileProvider) text = setTomlValue(text, null, "default_provider", tomlString(profileProvider));
+  if (profileModel) text = setTomlValue(text, null, "default_model", tomlString(profileModel));
   text = setTomlValue(text, null, "provider_timeout_secs", "120");
 
   text = setTomlValue(text, "autonomy", "level", tomlString("full"));
@@ -100,6 +98,7 @@ function configureZeroclaw() {
   text = setTomlValue(text, "memory", "response_cache_ttl_minutes", "60");
 
   text = setTomlValue(text, "security.otp", "enabled", "false");
+  text = removeTomlKeys(text, "security.otp", ["challenge_max_attempts"]);
   text = setTomlValue(text, "security.estop", "enabled", "false");
   text = setTomlValue(text, "skills", "open_skills_enabled", "false");
   text = setTomlValue(text, "skills", "allow_scripts", "false");
@@ -117,10 +116,8 @@ function configurePi() {
 
   const settings = readJson(settingsPath);
   backupIfExists(settingsPath);
-  writeJson(settingsPath, {
+  const nextSettings = {
     ...settings,
-    defaultProvider: "openai-codex",
-    defaultModel: "gpt-5.5",
     defaultThinkingLevel: "high",
     hideThinkingBlock: false,
     theme: "dark",
@@ -142,7 +139,10 @@ function configurePi() {
       reserveTokens: 12000,
       keepRecentTokens: 20000,
     },
-  });
+  };
+  if (profileProvider) nextSettings.defaultProvider = profileProvider;
+  if (profileModel) nextSettings.defaultModel = profileModel;
+  writeJson(settingsPath, nextSettings);
   changes.push(`Pi settings: ${settingsPath}`);
 
   writeProfileFile(join(dir, "AGENTS.md"), piAgentsMd(), "Pi profile");
@@ -165,9 +165,6 @@ function configureHermes() {
   if (configPath) backupIfExists(configPath);
 
   const commands = [
-    ["model.default", "gpt-5.5"],
-    ["model.provider", "openai-codex"],
-    ["model.base_url", "https://chatgpt.com/backend-api/codex"],
     ["agent.max_turns", "90"],
     ["agent.reasoning_effort", "high"],
     ["terminal.backend", "local"],
@@ -180,6 +177,11 @@ function configureHermes() {
     ["tool_output.max_lines", "2000"],
     ["tool_loop_guardrails.hard_stop_enabled", "false"],
   ];
+  if (profileProvider) commands.unshift(["model.provider", profileProvider]);
+  if (profileModel) commands.unshift(["model.default", profileModel]);
+  if (profileProvider === "openai-codex") {
+    commands.unshift(["model.base_url", "https://chatgpt.com/backend-api/codex"]);
+  }
 
   for (const [key, value] of commands) {
     const result = run([hermes, "config", "set", key, value]);
@@ -357,6 +359,25 @@ function removeTomlArrayTail(lines: string[], start: number, sectionEnd: number)
     lines.splice(index, 1);
     sectionEnd -= 1;
   }
+}
+
+function removeTomlKeys(text: string, section: string, keys: string[]) {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const header = `[${section}]`;
+  const start = lines.findIndex((line) => line.trim() === header);
+  if (start === -1) return normalizeFinalNewline(lines.join("\n"));
+
+  let end = lines.findIndex((line, index) => index > start && /^\s*\[.+\]\s*$/.test(line));
+  if (end === -1) end = lines.length;
+
+  const keyPattern = new RegExp(`^\\s*(?:${keys.map(escapeRegExp).join("|")})\\s*=`);
+  for (let index = end - 1; index > start; index--) {
+    if (keyPattern.test(lines[index])) {
+      lines.splice(index, 1);
+    }
+  }
+
+  return normalizeFinalNewline(lines.join("\n"));
 }
 
 function isTomlArrayTailLine(line: string) {

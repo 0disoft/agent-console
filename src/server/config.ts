@@ -8,8 +8,10 @@ export const home = process.env.USERPROFILE || process.env.HOME || "";
 export const host = "127.0.0.1";
 export const port = Number(process.env.AGENT_CONSOLE_PORT || 8765);
 export const timeoutDefault = 600;
-export const defaultModel = process.env.AGENT_CONSOLE_MODEL || "gpt-5.5";
-export const defaultProvider = process.env.AGENT_CONSOLE_PROVIDER || "openai-codex";
+export const configuredModel = process.env.AGENT_CONSOLE_MODEL || "";
+export const configuredProvider = process.env.AGENT_CONSOLE_PROVIDER || "";
+export const defaultModel = configuredModel || "gpt-5.5";
+export const defaultProvider = configuredProvider;
 export const defaultCwd = chooseDefaultCwd();
 
 export type AgentDefinition = {

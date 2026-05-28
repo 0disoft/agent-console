@@ -5,6 +5,7 @@ import {
   agentDefinitions,
   agentLabel,
   agentMetadata,
+  configuredModel,
   defaultCwd,
   defaultModel,
   defaultProvider,
@@ -258,8 +259,10 @@ async function buildStatusPayload() {
       summary: firstLine(version),
       models: statusOrModelSummary(agent.id, status, models),
       installed,
-      message: installed ? "" : `설치 필요 또는 ${envNameForTool(agent.id)} 지정 필요`,
-      ok: installed && version.ok,
+      message: installed
+        ? [status, models].map((result) => result?.stderr || "").find(Boolean) || ""
+        : `설치 필요 또는 ${envNameForTool(agent.id)} 지정 필요`,
+      ok: installed && version.ok && (!status || status.ok) && (!models || models.ok),
     }] as const;
   }));
 
@@ -300,11 +303,15 @@ export function chatCommand(payload: Record<string, unknown>) {
   if (definition.chatKind === "hermes") {
     const args = [
       tools[agent].command,
-      "--provider",
-      defaultProvider,
-      "--model",
-      defaultModel,
     ];
+
+    if (defaultProvider) {
+      args.push("--provider", defaultProvider);
+    }
+
+    if (configuredModel) {
+      args.push("--model", configuredModel);
+    }
 
     if (speed === "fast") {
       args.push("--ignore-rules", "--toolsets", "clarify");
@@ -319,13 +326,19 @@ export function chatCommand(payload: Record<string, unknown>) {
   }
 
   if (definition.chatKind === "pi") {
-    const piThinking = speed === "fast" ? "minimal" : speed === "balanced" ? "low" : thinking;
+    const piThinking = speed === "fast" ? "low" : speed === "balanced" ? "medium" : thinking;
     const args = [
       tools[agent].command,
-      "--model",
-      `${defaultProvider}/${defaultModel}:${piThinking}`,
-      "--print",
     ];
+
+    if (configuredModel) {
+      const modelRef = defaultProvider ? `${defaultProvider}/${configuredModel}` : configuredModel;
+      args.push("--model", `${modelRef}:${piThinking}`);
+    } else {
+      args.push("--thinking", piThinking);
+    }
+
+    args.push("--print");
 
     if (speed === "fast") {
       args.push("--no-tools", "--no-context-files", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-session");
@@ -340,19 +353,26 @@ export function chatCommand(payload: Record<string, unknown>) {
   }
 
   if (definition.chatKind === "zeroclaw") {
+    const args = [
+      tools[agent].command,
+      "agent",
+    ];
+
+    if (defaultProvider) {
+      args.push("--provider", defaultProvider);
+    }
+
+    if (configuredModel) {
+      args.push("--model", configuredModel);
+    }
+
+    args.push(
+      "--message",
+      promptForSpeed,
+    );
+
     return {
-      args: [
-        tools[agent].command,
-        "agent",
-        "--provider",
-        defaultProvider,
-        "--model",
-        defaultModel,
-        "--temperature",
-        speed === "fast" ? "0.2" : speed === "balanced" ? "0.5" : "0.7",
-        "--message",
-        promptForSpeed,
-      ],
+      args,
       timeout,
     };
   }

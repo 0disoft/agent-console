@@ -174,7 +174,9 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
           exited = true;
           return null;
         });
-        await Promise.allSettled([stdout, stderr]);
+        const [stdoutResult, stderrResult] = await Promise.allSettled([stdout, stderr]);
+        const stdoutText = stdoutResult.status === "fulfilled" ? stdoutResult.value : "";
+        const stderrText = stderrResult.status === "fulfilled" ? stderrResult.value : "";
 
         if (timedOut) {
           send({ type: "stderr", text: `Timed out after ${timeoutSeconds} seconds.` });
@@ -185,8 +187,12 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
         const result = {
           ok: !timedOut && !aborted && code === 0,
           code: timedOut || aborted ? null : code,
-          stdout: "",
-          stderr: "",
+          stdout: stdoutText,
+          stderr: timedOut
+            ? `${stderrText}${stderrText ? "\n" : ""}Timed out after ${timeoutSeconds} seconds.`
+            : aborted
+              ? `${stderrText}${stderrText ? "\n" : ""}Request aborted.`
+              : stderrText,
           command,
           cwd,
         };
@@ -245,24 +251,28 @@ async function pipeProcessStream(
   send: (event: Record<string, unknown>) => void,
   onOutput?: (event: { stream: "stdout" | "stderr"; text: string }) => void,
 ) {
-  if (!stream) return;
+  if (!stream) return "";
   const reader = stream.getReader();
   const decoder = outputDecoder();
+  let output = "";
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const text = decoder.decode(value, { stream: true });
       if (text) {
+        output += text;
         onOutput?.({ stream: type, text });
         send({ type, text });
       }
     }
     const tail = decoder.decode();
     if (tail) {
+      output += tail;
       onOutput?.({ stream: type, text: tail });
       send({ type, text: tail });
     }
+    return stripAnsi(output);
   } finally {
     reader.releaseLock();
   }
