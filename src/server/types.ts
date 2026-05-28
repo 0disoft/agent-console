@@ -28,6 +28,8 @@ export type StatusPayload = {
     key: string;
     label: string;
     agent?: string;
+    agents?: string[];
+    require?: "any" | "all";
   }>;
   tools: Record<string, {
     path: string;

@@ -28,10 +28,14 @@ let cachedStatus: { at: number; payload: StatusPayload } | null = null;
 let inflightStatus: Promise<StatusPayload> | null = null;
 const installedCache = new Map<ToolName, { at: number; command: string; installed: boolean }>();
 const statusCacheMs = 15_000;
+const staticStatusCacheMs = 10 * 60_000;
+const commandCache = new Map<string, { at: number; result: RunResult }>();
 
 export function clearStatusCache() {
   cachedStatus = null;
   inflightStatus = null;
+  commandCache.clear();
+  installedCache.clear();
 }
 
 async function stopHermesGateway() {
@@ -237,11 +241,15 @@ export async function statusPayload() {
       cachedStatus = { at: Date.now(), payload };
       return payload;
     })
+    .catch((error) => {
+      if (cachedStatus) return cachedStatus.payload;
+      throw error;
+    })
     .finally(() => {
       if (inflightStatus === pending) inflightStatus = null;
     });
   inflightStatus = pending;
-  return pending;
+  return { ...(await pending), cached: false };
 }
 
 async function buildStatusPayload() {
@@ -252,9 +260,9 @@ async function buildStatusPayload() {
     const statusArgs = agent.statusArgs ? [tool.command, ...agent.statusArgs] : null;
     const modelArgs = agent.modelArgs ? [tool.command, ...agent.modelArgs] : null;
     const [version, status, models] = await Promise.all([
-      installed ? runCommand(versionArgs, { timeout: 30 }) : Promise.resolve(emptyRunResult(versionArgs)),
-      installed && statusArgs ? runCommand(statusArgs, { timeout: 30 }) : Promise.resolve(statusArgs ? emptyRunResult(statusArgs) : null),
-      installed && modelArgs ? runCommand(modelArgs, { timeout: 12 }) : Promise.resolve(modelArgs ? emptyRunResult(modelArgs) : null),
+      installed ? cachedRunCommand(versionArgs, { timeout: 10 }, staticStatusCacheMs) : Promise.resolve(emptyRunResult(versionArgs)),
+      installed && statusArgs ? runCommand(statusArgs, { timeout: 12 }) : Promise.resolve(statusArgs ? emptyRunResult(statusArgs) : null),
+      installed && modelArgs ? cachedRunCommand(modelArgs, { timeout: 12 }, staticStatusCacheMs) : Promise.resolve(modelArgs ? emptyRunResult(modelArgs) : null),
     ]);
     return [agent.id, {
       path: tool.command,
@@ -274,6 +282,19 @@ async function buildStatusPayload() {
     tools: Object.fromEntries(entries),
   };
   return payload;
+}
+
+async function cachedRunCommand(args: string[], options: Parameters<typeof runCommand>[1], ttlMs: number) {
+  const key = args.join("\u0000");
+  const cached = commandCache.get(key);
+  if (cached && Date.now() - cached.at < ttlMs) {
+    return { ...cached.result };
+  }
+  const result = await runCommand(args, options);
+  if (result.ok) {
+    commandCache.set(key, { at: Date.now(), result: { ...result } });
+  }
+  return result;
 }
 
 export function chatCommand(payload: Record<string, unknown>) {

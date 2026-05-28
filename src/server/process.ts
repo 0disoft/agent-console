@@ -275,15 +275,10 @@ function registerInputWriter(child: ReturnType<typeof Bun.spawn>, options: RunOp
   if (typeof stdin.write === "function") {
     options.onInput?.(async (text: string) => {
       try {
-        await stdin.write(text);
+        await stdin.write(encoder.encode(text));
         return true;
       } catch {
-        try {
-          await stdin.write(encoder.encode(text));
-          return true;
-        } catch {
-          return false;
-        }
+        return false;
       }
     });
     return;
@@ -305,12 +300,12 @@ function registerInputWriter(child: ReturnType<typeof Bun.spawn>, options: RunOp
 function killProcess(child: { kill: () => void; pid?: number }) {
   if (process.platform === "win32" && child.pid) {
     try {
-      Bun.spawn(["taskkill.exe", "/PID", String(child.pid), "/T", "/F"], {
+      Bun.spawnSync(["taskkill.exe", "/PID", String(child.pid), "/T", "/F"], {
         stdout: "ignore",
         stderr: "ignore",
       });
-      return;
-    } catch {
+    } catch (error) {
+      console.warn(`taskkill failed; falling back to child.kill(): ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   try {

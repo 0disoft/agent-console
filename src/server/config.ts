@@ -102,18 +102,40 @@ export const tools: Record<ToolName, ToolResolution> = Object.fromEntries(
   agentDefinitions.map((agent) => [agent.id, resolveTool(agent.commandName, agent.envName, agent.knownPaths)]),
 );
 
+const bunCommand = process.execPath || "bun";
+
+const localPresets = [
+  {
+    key: "apply_free_agent_profile",
+    label: "자유 설정 적용",
+    args: [bunCommand, join(root, "scripts", "apply-agent-profile.ts")],
+  },
+];
+
+const localPresetMetadata = localPresets.map((preset) => ({
+  key: preset.key,
+  label: preset.label,
+  agents: agentDefinitions.map((agent) => agent.id),
+  require: "any" as const,
+}));
+
 export const presets = Object.fromEntries(
-  agentDefinitions.flatMap((agent) => (agent.presets || []).map((preset) => [
-    preset.key,
-    [tools[agent.id].command, ...preset.args],
-  ])),
+  [
+    ...agentDefinitions.flatMap((agent) => (agent.presets || []).map((preset) => [
+      preset.key,
+      [tools[agent.id].command, ...preset.args],
+    ])),
+    ...localPresets.map((preset) => [preset.key, preset.args]),
+  ],
 ) as Record<string, string[]>;
 
 export const presetMetadata = agentDefinitions.flatMap((agent) => (agent.presets || []).map((preset) => ({
   key: preset.key,
   label: preset.label,
   agent: agent.id,
-})));
+  agents: [agent.id],
+  require: "all" as const,
+}))).concat(localPresetMetadata);
 
 export const updateTargets = Object.fromEntries(
   agentDefinitions

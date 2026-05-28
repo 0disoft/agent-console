@@ -1,4 +1,5 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { defaultCwd, defaultModel, defaultProvider, host, port, root } from "./config";
@@ -132,8 +133,9 @@ export function finishRun(id: string, result: RunResult) {
     error: result.ok ? "" : result.stderr || "",
   };
   activeRuns.delete(id);
-  appendLedger(record);
-  broadcastRunEvent("run:done", record);
+  void appendLedgerAsync(record).finally(() => {
+    broadcastRunEvent("run:done", record);
+  });
 }
 
 export function stopRun(id: string) {
@@ -283,11 +285,12 @@ function snapshotIssues(status: StatusPayload) {
     }));
 }
 
-function appendLedger(record: RunRecord) {
+async function appendLedgerAsync(record: RunRecord) {
   try {
-    mkdirSync(stateDir, { recursive: true });
-    appendFileSync(ledgerPath, `${JSON.stringify(record)}\n`, "utf8");
-  } catch {
+    await mkdir(stateDir, { recursive: true });
+    await appendFile(ledgerPath, `${JSON.stringify(record)}\n`, "utf8");
+  } catch (error) {
+    console.warn(`Run ledger append failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -325,13 +328,20 @@ function sendWs(ws: ServerWebSocket<unknown>, event: string, data: unknown) {
 }
 
 function looksLikeInputPrompt(text: string) {
-  return /(\[[YyNn]\/[YyNn]\]|\([YyNn]\/[YyNn]\)|\byes\/no\b|\bcontinue\?\b|\bapprove\b|\bpermission\b|승인|계속할까요|입력하세요)/i.test(text);
+  const lines = stripControl(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-4);
+  return lines.some((line) => (
+    /(?:\[[YyNn]\/[YyNn]\]|\([YyNn]\/[YyNn]\)|\byes\/no\b)\s*[:?]?\s*$/.test(line)
+    || /\b(?:continue|approve|permission)\b[^.\n]{0,80}[?:]\s*$/i.test(line)
+    || /(?:승인|계속|입력)[^.\n]{0,80}(?:\?|:|하세요\.?)\s*$/.test(line)
+  ));
 }
 
 function readLedger(limit: number) {
   try {
     if (!existsSync(ledgerPath)) return [];
-    return readRecentLedgerLines(limit).map((line) => JSON.parse(line) as RunRecord);
+    return readRecentLedgerLines(limit)
+      .map(parseLedgerLine)
+      .filter((record): record is RunRecord => Boolean(record));
   } catch {
     return [];
   }
@@ -339,9 +349,10 @@ function readLedger(limit: number) {
 
 function readRecentLedgerLines(limit: number) {
   const normalizedLimit = normalizeRunHistoryLimit(limit, DEFAULT_RUN_HISTORY_LIMIT, RUN_LOOKUP_LIMIT);
-  const stat = statSync(ledgerPath);
-  const fd = openSync(ledgerPath, "r");
+  let fd = -1;
   try {
+    const stat = statSync(ledgerPath);
+    fd = openSync(ledgerPath, "r");
     const chunks: Buffer[] = [];
     let position = stat.size;
     let bytesReadTotal = 0;
@@ -354,18 +365,32 @@ function readRecentLedgerLines(limit: number) {
       const bytesRead = readSync(fd, buffer, 0, bytesToRead, position);
       if (bytesRead <= 0) break;
       const chunk = buffer.subarray(0, bytesRead);
-      chunks.unshift(chunk);
+      chunks.push(chunk);
       bytesReadTotal += bytesRead;
       newlineCount += countNewlines(chunk);
     }
 
-    const text = Buffer.concat(chunks).toString("utf8");
+    const text = Buffer.concat(chunks.reverse()).toString("utf8");
     const lines = text.split(/\r?\n/).filter(Boolean);
     if (position > 0 && lines.length > 0) lines.shift();
     return lines.slice(-normalizedLimit);
   } finally {
-    closeSync(fd);
+    if (fd >= 0) closeSync(fd);
   }
+}
+
+function parseLedgerLine(line: string) {
+  try {
+    const record = JSON.parse(line) as RunRecord;
+    return record && typeof record.id === "string" ? record : null;
+  } catch {
+    console.warn("Skipping corrupted run ledger line.");
+    return null;
+  }
+}
+
+function stripControl(text: string) {
+  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
 }
 
 function countNewlines(buffer: Buffer) {
