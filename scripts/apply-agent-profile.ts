@@ -342,12 +342,26 @@ function setTomlValue(text: string, section: string | null, key: string, value: 
   for (let index = start; index < end; index++) {
     if (keyPattern.test(lines[index])) {
       lines[index] = `${key} = ${value}`;
+      removeTomlArrayTail(lines, index + 1, end);
       return normalizeFinalNewline(lines.join("\n"));
     }
   }
 
   lines.splice(header ? start + 1 : end, 0, `${key} = ${value}`);
   return normalizeFinalNewline(lines.join("\n"));
+}
+
+function removeTomlArrayTail(lines: string[], start: number, sectionEnd: number) {
+  let index = start;
+  while (index < sectionEnd && isTomlArrayTailLine(lines[index])) {
+    lines.splice(index, 1);
+    sectionEnd -= 1;
+  }
+}
+
+function isTomlArrayTailLine(line: string) {
+  const trimmed = line.trim();
+  return /^"[^"]*",?$/.test(trimmed) || trimmed === "]";
 }
 
 function readJson(path: string) {
