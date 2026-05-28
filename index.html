@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent Console</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111315'/%3E%3Cpath d='M8 10h16v12H8z' fill='%235cc8a7'/%3E%3Cpath d='M11 14h10v2H11zm0 4h6v2h-6z' fill='%23111315'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -29,7 +29,9 @@
 
       <div class="panel stack" tabindex="0" aria-labelledby="statusHeading">
         <h2 id="statusHeading">상태</h2>
-        <div id="statusList" class="stack status-list" aria-live="polite"></div>
+        <div id="statusList" class="stack status-list" aria-live="polite">
+          <div class="empty-state">상태 조회 중...</div>
+        </div>
       </div>
 
       <div class="panel stack" tabindex="0" aria-labelledby="runsHeading">
@@ -37,7 +39,9 @@
           <h2 id="runsHeading">최근 실행</h2>
           <button id="refreshRunsBtn" class="compact" type="button">갱신</button>
         </div>
-        <div id="runList" class="run-list" aria-live="polite"></div>
+        <div id="runList" class="run-list" aria-live="polite">
+          <div class="empty-state">실행 기록 조회 중...</div>
+        </div>
       </div>
 
       <div class="panel stack" id="managePanel" tabindex="0" aria-labelledby="manageHeading">
@@ -51,7 +55,9 @@
     </aside>
 
     <section class="stack work-area" aria-label="작업 영역">
-      <div class="grid" id="agentCards" aria-live="polite"></div>
+      <div class="grid" id="agentCards" aria-live="polite">
+        <div class="panel empty-state">에이전트 상태 조회 중...</div>
+      </div>
 
       <div class="panel stack chat-panel" tabindex="0" aria-labelledby="chatHeading">
         <div class="row panel-head chat-head">
@@ -63,8 +69,9 @@
         <div class="field-row">
           <div>
             <label for="prompt">메시지</label>
-            <textarea id="prompt" placeholder="현재 작업 폴더를 기준으로 요청을 입력" aria-required="true" aria-invalid="false" aria-describedby="promptError"></textarea>
+            <textarea id="prompt" placeholder="요청을 입력" aria-required="true" aria-invalid="false" aria-describedby="promptError promptHint"></textarea>
             <div id="promptError" class="field-error" aria-live="polite"></div>
+            <div id="promptHint" class="field-hint">Ctrl+Enter 전송 · Alt+Up/Down 최근 프롬프트</div>
           </div>
           <div class="stack control-stack">
             <div>
@@ -106,7 +113,7 @@
               <span>stdin 허용</span>
             </label>
             <div class="send-actions">
-              <button class="primary" id="sendBtn" type="button" title="Ctrl+Enter로 보내기, Alt+Up/Down으로 프롬프트 히스토리"><span>보내기</span><span class="key-hint">Ctrl+Enter</span></button>
+              <button class="primary" id="sendBtn" type="button" title="Ctrl+Enter로 보내기">보내기</button>
               <button class="secondary-danger" id="inlineStopBtn" type="button" disabled>중단 Esc</button>
             </div>
           </div>
@@ -116,13 +123,19 @@
       <div class="panel stack output-panel" tabindex="0" aria-labelledby="outputHeading">
         <div class="row panel-head">
           <h2 id="outputHeading">출력</h2>
-          <div class="row">
+          <div class="row output-tools">
+            <label class="sr-only" for="outputSearch">출력 검색</label>
+            <input id="outputSearch" class="output-search" type="search" placeholder="출력 검색">
+            <span id="outputSearchCount" class="muted output-search-count">0</span>
             <span id="runStatus" class="muted run-status">대기</span>
             <button class="secondary-danger" id="stopBtn" type="button" disabled>중단</button>
             <button id="clearBtn" type="button">지우기</button>
           </div>
         </div>
-        <div id="output" class="output-list" tabindex="0" role="log" aria-live="polite" aria-label="명령 출력"></div>
+        <div class="output-wrap">
+          <div id="output" class="output-list" tabindex="0" role="log" aria-live="polite" aria-label="명령 출력"></div>
+          <button id="outputJumpBtn" class="output-jump" type="button" hidden>아래 새 로그 보기</button>
+        </div>
       </div>
     </section>
   </main>
@@ -132,6 +145,13 @@
       <button id="closeSnapshotBtn" type="button">닫기</button>
     </div>
     <pre id="snapshotBody" class="snapshot-body" tabindex="0"></pre>
+  </dialog>
+  <dialog id="runDetailDialog" class="snapshot-dialog">
+    <div class="row panel-head">
+      <h2>실행 상세</h2>
+      <button id="closeRunDetailBtn" type="button">닫기</button>
+    </div>
+    <pre id="runDetailBody" class="snapshot-body" tabindex="0"></pre>
   </dialog>
   <script type="module" src="/app.js"></script>
 </body>

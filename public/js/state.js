@@ -26,6 +26,7 @@ export const state = {
   runTimer: null,
   abortedControllers: new WeakSet(),
   outputHistory: [],
+  outputFilter: "",
   promptHistoryIndex: -1,
   promptHistoryDraft: "",
   outputPinned: true,

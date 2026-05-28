@@ -2,7 +2,7 @@ input,
 textarea,
 select {
   width: 100%;
-  background: #0f1113;
+  background: var(--field);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -12,7 +12,7 @@ select {
 }
 
 textarea {
-  min-height: 170px;
+  min-height: 72px;
   resize: vertical;
   line-height: 1.45;
 }
@@ -42,8 +42,9 @@ textarea.invalid {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
+  min-height: 38px;
   color: var(--muted);
+  margin-top: 22px;
 }
 
 .check-row input {
@@ -57,8 +58,16 @@ textarea.invalid {
   margin-top: 5px;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
 .field-row {
   display: grid;
-  grid-template-columns: 1fr minmax(150px, 170px);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  gap: 12px;
+  align-items: start;
 }

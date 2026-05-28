@@ -1,7 +1,7 @@
-import { abortActiveRequest, loadRuns, postJson, refresh, sendRunInput, showSnapshot, stopRun, validateCwd } from "./api.js";
+import { abortActiveRequest, loadRuns, postJson, refresh, sendRunInput, showRunDetails, showSnapshot, stopRun, validateCwd } from "./api.js";
 import { els } from "./dom.js";
 import { applyTemplate, recallPrompt } from "./history.js";
-import { appendBlock, clearOutput } from "./output.js";
+import { appendBlock, clearOutput, filterOutput, scrollOutputToBottom, updateOutputJump } from "./output.js";
 import { promptTemplates, state } from "./state.js";
 import { agentName } from "./text.js";
 import { autoGrowPrompt, moveFocusWithin, selectAgent, updateAgentUi } from "./ui.js";
@@ -105,7 +105,9 @@ export function bindEvents() {
   els.refreshRunsBtn.addEventListener("click", loadRuns);
   els.snapshotBtn.addEventListener("click", showSnapshot);
   els.closeSnapshotBtn.addEventListener("click", () => els.snapshotDialog.close());
+  els.closeRunDetailBtn.addEventListener("click", () => els.runDetailDialog.close());
   els.clearBtn.addEventListener("click", clearOutput);
+  els.outputSearch.addEventListener("input", () => filterOutput(els.outputSearch.value));
   els.runList.addEventListener("click", (event) => {
     if (!(event.target instanceof Element)) return;
     const button = event.target.closest("[data-run-stop]");
@@ -116,18 +118,33 @@ export function bindEvents() {
     const inputButton = event.target.closest("[data-run-input]");
     if (inputButton) {
       sendRunInputFromPanel(inputButton.dataset.runInput);
+      return;
+    }
+    if (event.target.closest("button, input, select, textarea, a")) return;
+    const row = event.target.closest("[data-run-id]");
+    if (row) {
+      showRunDetails(row.dataset.runId);
     }
   });
   els.runList.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || !(event.target instanceof Element)) return;
+    if (!(event.target instanceof Element)) return;
     const input = event.target.closest("[data-run-input-text]");
-    if (!input) return;
-    event.preventDefault();
-    sendRunInputFromPanel(input.dataset.runInputText);
+    if (event.key === "Enter" && input) {
+      event.preventDefault();
+      sendRunInputFromPanel(input.dataset.runInputText);
+      return;
+    }
+    const row = event.target.closest("[data-run-id]");
+    if (row && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      showRunDetails(row.dataset.runId);
+    }
   });
   els.output.addEventListener("scroll", () => {
     state.outputPinned = els.output.scrollTop + els.output.clientHeight >= els.output.scrollHeight - 24;
+    updateOutputJump();
   });
+  els.outputJumpBtn.addEventListener("click", scrollOutputToBottom);
   els.stopBtn.addEventListener("click", abortActiveRequest);
   els.inlineStopBtn.addEventListener("click", abortActiveRequest);
   els.managePanel.addEventListener("keydown", (event) => {

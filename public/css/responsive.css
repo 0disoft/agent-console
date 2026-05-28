@@ -6,7 +6,8 @@
   aside {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    max-height: 42vh;
+    max-height: 34vh;
+    padding-block: 10px;
   }
 
   .grid {
@@ -15,6 +16,10 @@
 
   .field-row {
     grid-template-columns: 1fr;
+  }
+
+  .control-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .chat-head {
@@ -28,5 +33,30 @@
 
   .work-area {
     min-height: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  aside {
+    max-height: 30vh;
+  }
+
+  .agent {
+    display: none;
+  }
+
+  .output-list {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 560px) {
+  .control-stack,
+  .send-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .check-row {
+    margin-top: 0;
   }
 }

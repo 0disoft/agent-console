@@ -5,7 +5,7 @@ header {
   justify-content: space-between;
   padding: 0 18px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #171b1e, #121517);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
 }
 
 main {
@@ -16,9 +16,9 @@ main {
 
 aside {
   border-right: 1px solid var(--line);
-  border-left: 3px solid rgba(92, 200, 167, .42);
+  border-left: 3px solid oklch(76% 0.12 170 / .42);
   padding: 14px;
-  background: linear-gradient(180deg, #171c1f, #121618);
+  background: linear-gradient(180deg, var(--panel-strong), var(--surface));
   overflow: auto;
 }
 
@@ -70,9 +70,19 @@ section {
 
 .control-stack {
   align-content: start;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.control-stack > div,
+.control-stack > label {
+  min-width: 0;
 }
 
 .send-actions {
+  grid-column: 1 / -1;
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }

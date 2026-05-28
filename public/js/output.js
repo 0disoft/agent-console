@@ -31,6 +31,11 @@ export function appendBlock(text, type = "info", label = typeLabel(type), persis
 export function renderOutputBlock(entry) {
   const block = document.createElement("article");
   block.className = `output-block ${entry.type || "info"}`;
+  block.dataset.searchText = [
+    entry.label || typeLabel(entry.type || "info"),
+    entry.stamp || "",
+    entry.text || "",
+  ].join("\n").toLowerCase();
 
   const head = document.createElement("div");
   head.className = "output-head";
@@ -58,8 +63,14 @@ export function renderOutputBlock(entry) {
     els.output.removeChild(els.output.firstElementChild);
   }
   requestAnimationFrame(() => {
-    if (state.outputPinned) els.output.scrollTop = els.output.scrollHeight;
+    if (state.outputPinned) {
+      els.output.scrollTop = els.output.scrollHeight;
+      updateOutputJump();
+    } else {
+      els.outputJumpBtn.hidden = false;
+    }
   });
+  applyOutputFilter();
   return block;
 }
 
@@ -80,6 +91,7 @@ export function restoreOutputHistory() {
     .slice(-maxOutputBlocks);
   els.output.replaceChildren();
   state.outputHistory.forEach(renderOutputBlock);
+  applyOutputFilter();
 }
 
 export function clearOutput() {
@@ -89,6 +101,8 @@ export function clearOutput() {
   } catch {
   }
   els.output.replaceChildren();
+  applyOutputFilter();
+  updateOutputJump();
 }
 
 export function persistOutputHistory() {
@@ -109,10 +123,18 @@ function trimHistoryForStorage(entries) {
   let start = entries.length;
   while (start > 0 && total < maxStoredHistoryChars) {
     const next = entries[start - 1];
-    total += JSON.stringify(next).length;
+    total += estimatedStoredLength(next);
     start -= 1;
   }
   return entries.slice(total > maxStoredHistoryChars ? start + 1 : start);
+}
+
+function estimatedStoredLength(entry) {
+  return String(entry?.text || "").length
+    + String(entry?.label || "").length
+    + String(entry?.stamp || "").length
+    + String(entry?.type || "").length
+    + 80;
 }
 
 export function truncateStoredText(text) {
@@ -131,4 +153,33 @@ async function copyOutputText(text, button) {
   } catch {
     appendBlock("클립보드 복사에 실패했습니다.", "warning");
   }
+}
+
+export function scrollOutputToBottom() {
+  els.output.scrollTop = els.output.scrollHeight;
+  state.outputPinned = true;
+  updateOutputJump();
+}
+
+export function updateOutputJump() {
+  els.outputJumpBtn.hidden = state.outputPinned;
+}
+
+export function filterOutput(query) {
+  state.outputFilter = String(query || "").trim().toLowerCase();
+  applyOutputFilter();
+}
+
+export function applyOutputFilter() {
+  if (!els.outputSearchCount) return;
+  const blocks = Array.from(els.output.querySelectorAll(".output-block"));
+  const query = state.outputFilter;
+  let visible = 0;
+  for (const block of blocks) {
+    const text = block.dataset.searchText || "";
+    const matches = !query || text.includes(query);
+    block.hidden = !matches;
+    if (matches) visible += 1;
+  }
+  els.outputSearchCount.textContent = query ? `${visible}/${blocks.length}` : `${blocks.length}`;
 }

@@ -76,8 +76,13 @@ export function renderStatus(data) {
   if (!state.agents.some((agent) => agent.id === state.activeAgent && agent.supportsChat)) {
     state.activeAgent = state.agents.find((agent) => agent.supportsChat)?.id || state.activeAgent;
   }
-  els.statusList.replaceChildren(...Object.entries(tools).map(([name, tool]) => statusSummaryRow(name, tool)));
-  els.agentCards.replaceChildren(...Object.entries(tools).map(([name, tool]) => agentCard(name, tool)));
+  const entries = Object.entries(tools);
+  els.statusList.replaceChildren(...(entries.length
+    ? entries.map(([name, tool]) => statusSummaryRow(name, tool))
+    : [emptyState("에이전트 상태가 없습니다.")]));
+  els.agentCards.replaceChildren(...(entries.length
+    ? entries.map(([name, tool]) => agentCard(name, tool))
+    : [emptyState("표시할 에이전트가 없습니다.", "panel empty-state")]));
   renderAgentChoices();
   renderManagementButtons();
   updateInstallState();
@@ -120,8 +125,7 @@ export function updateInstallState() {
     button.title = enabled ? "" : "설치된 실행 파일을 찾지 못했습니다.";
   });
   document.querySelectorAll("[data-preset]").forEach((button) => {
-    const target = presetAgent(button.dataset.preset);
-    const enabled = !target || state.installedTools[target] !== false;
+    const enabled = presetEnabled(button.dataset.preset);
     button.disabled = !enabled;
     button.title = enabled ? "" : "설치된 실행 파일을 찾지 못했습니다.";
   });
@@ -160,7 +164,7 @@ export function moveFocusWithin(container, columns, delta) {
 
 export function autoGrowPrompt() {
   els.promptBox.style.height = "auto";
-  els.promptBox.style.height = `${Math.min(Math.max(els.promptBox.scrollHeight, 170), 360)}px`;
+  els.promptBox.style.height = `${Math.min(Math.max(els.promptBox.scrollHeight, 72), 240)}px`;
 }
 
 export function requestLabel(path, payload) {
@@ -170,8 +174,17 @@ export function requestLabel(path, payload) {
   return "작업";
 }
 
-function presetAgent(key) {
-  return state.presets.find((preset) => preset.key === key)?.agent || "";
+function presetEnabled(key) {
+  const preset = state.presets.find((item) => item.key === key);
+  if (!preset) return false;
+  const agents = Array.isArray(preset.agents)
+    ? preset.agents
+    : preset.agent
+      ? [preset.agent]
+      : [];
+  if (!agents.length) return true;
+  const installed = agents.map((agent) => state.installedTools[agent] !== false);
+  return preset.require === "any" ? installed.some(Boolean) : installed.every(Boolean);
 }
 
 function renderAgentChoices() {
@@ -207,6 +220,10 @@ function actionButton(label, kind, value) {
 function runRow(run) {
   const row = document.createElement("div");
   row.className = `run-row ${run.status || "running"}`;
+  row.dataset.runId = run.id;
+  row.tabIndex = 0;
+  row.role = "button";
+  row.setAttribute("aria-label", `${runTitle(run)} 상세 보기`);
 
   const main = document.createElement("div");
   main.className = "run-main";
@@ -308,10 +325,7 @@ function statusSummaryRow(name, tool) {
   row.className = "status-summary-row";
   const nameNode = document.createElement("strong");
   nameNode.textContent = name;
-  const stateNode = document.createElement("span");
-  stateNode.className = "muted";
-  stateNode.textContent = tool.installed ? (tool.ok ? "정상" : "확인") : "미설치";
-  row.append(statusDot(tool.ok), nameNode, stateNode);
+  row.append(statusDot(tool.ok), nameNode, statePill(tool));
   return row;
 }
 
@@ -348,11 +362,25 @@ function statusDot(ok) {
   return dot;
 }
 
+function statePill(tool) {
+  const pill = document.createElement("span");
+  pill.className = `state-pill ${tool.installed ? (tool.ok ? "ok" : "warn") : "error"}`;
+  pill.textContent = tool.installed ? (tool.ok ? "정상" : "확인") : "미설치";
+  return pill;
+}
+
 function mutedLine(text) {
   const line = document.createElement("div");
   line.className = "muted";
   line.textContent = text || "";
   return line;
+}
+
+function emptyState(text, className = "empty-state") {
+  const node = document.createElement("div");
+  node.className = className;
+  node.textContent = text;
+  return node;
 }
 
 function agentMeta(id) {

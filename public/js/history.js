@@ -31,11 +31,11 @@ export function recallPrompt(direction) {
 export function applyTemplate() {
   const value = promptTemplates[els.template.value];
   if (!value) return;
-  if (els.promptBox.value.trim() && els.promptBox.value !== value && !confirm("현재 메시지를 템플릿으로 바꿀까요?")) {
-    els.template.value = "";
-    return;
+  if (els.promptBox.value.trim() && els.promptBox.value !== value) {
+    els.promptBox.value = `${els.promptBox.value.trim()}\n\n${value}`;
+  } else {
+    els.promptBox.value = value;
   }
-  els.promptBox.value = value;
   els.promptBox.classList.remove("invalid");
   els.promptBox.setAttribute("aria-invalid", "false");
   els.promptError.textContent = "";

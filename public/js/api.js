@@ -2,6 +2,7 @@ import { els } from "./dom.js";
 import {
   append,
   appendBlock,
+  applyOutputFilter,
   persistOutputHistory,
   renderOutputText,
   truncateStoredText,
@@ -11,6 +12,9 @@ import { rememberCwd, rememberPrompt } from "./storage.js";
 import { agentName, stripAnsi } from "./text.js";
 import { renderCwdHistory } from "./history.js";
 import { renderRuns, renderStatus, requestLabel, setButtonBusy, setRequestRunning } from "./ui.js";
+
+let runsLoadTimer = 0;
+let refreshTimer = 0;
 
 export function abortActiveRequest() {
   if (!state.activeRequest) return false;
@@ -59,10 +63,28 @@ export async function showSnapshot() {
     } else {
       els.snapshotDialog.setAttribute("open", "");
     }
+    els.snapshotBody.focus();
   } catch (error) {
     appendBlock(`스냅샷 조회 실패\n${error}`, "error");
   } finally {
     setButtonBusy(els.snapshotBtn, false);
+  }
+}
+
+export async function showRunDetails(id) {
+  if (!id) return;
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(id)}`);
+    const run = await parseJsonResponse(res);
+    els.runDetailBody.textContent = formatRunDetail(run);
+    if (typeof els.runDetailDialog.showModal === "function") {
+      els.runDetailDialog.showModal();
+    } else {
+      els.runDetailDialog.setAttribute("open", "");
+    }
+    els.runDetailBody.focus();
+  } catch (error) {
+    appendBlock(`실행 상세 조회 실패\n${error}`, "error");
   }
 }
 
@@ -170,11 +192,11 @@ function handleSseEvent(eventText) {
 
 function handleRunEvent(event, data) {
   if (event === "hello" || event === "run:start" || event === "run:command" || event === "run:input-ready" || event === "run:waiting-input" || event === "run:input" || event === "run:stop-requested") {
-    loadRuns();
+    scheduleLoadRuns();
   }
   if (event === "run:done") {
-    loadRuns();
-    refresh();
+    scheduleLoadRuns();
+    scheduleRefresh();
   }
 }
 
@@ -267,17 +289,19 @@ async function postStreamJson(path, payload, button) {
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
       for (const line of lines) {
-        if (line.trim()) handleStreamEvent(JSON.parse(line));
+        parseStreamLine(line, handleStreamEvent);
       }
     }
     buffer += decoder.decode();
-    if (buffer.trim()) handleStreamEvent(JSON.parse(buffer));
+    parseStreamLine(buffer, handleStreamEvent);
     cancelStreamFlush();
     const resultText = formatStreamResult(finalData, command, cwdValue, stdout, stderr);
     block.className = `output-block ${finalData?.ok ? "ok" : "error"}`;
     const labelNode = block.querySelector(".output-head > span");
     if (labelNode) labelNode.textContent = finalData?.ok ? "완료" : "오류";
     renderOutputText(bodyNode, resultText);
+    block.dataset.searchText = `${labelNode?.textContent || ""}\n${resultText}`.toLowerCase();
+    applyOutputFilter();
     state.outputHistory.push({
       type: finalData?.ok ? "ok" : "error",
       label: finalData?.ok ? "완료" : "오류",
@@ -294,6 +318,8 @@ async function postStreamJson(path, payload, button) {
       const errorText = controller.signal.aborted ? "요청이 중단되었습니다." : `요청 실패\n${error}`;
       cancelStreamFlush();
       renderOutputText(bodyNode, errorText);
+      block.dataset.searchText = `오류\n${errorText}`.toLowerCase();
+      applyOutputFilter();
       state.outputHistory.push({
         type: controller.signal.aborted ? "warning" : "error",
         label: controller.signal.aborted ? "알림" : "오류",
@@ -308,6 +334,8 @@ async function postStreamJson(path, payload, button) {
       const stoppedText = partialText || "[사용자에 의해 중단됨]";
       cancelStreamFlush();
       renderOutputText(bodyNode, stoppedText);
+      block.dataset.searchText = `중단됨\n${stoppedText}`.toLowerCase();
+      applyOutputFilter();
       state.outputHistory.push({
         type: "warning",
         label: "중단됨",
@@ -343,7 +371,10 @@ async function postStreamJson(path, payload, button) {
   function scheduleStreamFlush() {
     if (streamFlushId) return;
     streamFlushId = requestAnimationFrame(() => {
-      bodyNode.textContent = stripAnsi([stdout, stderr ? `\n오류:\n${stderr}` : ""].filter(Boolean).join(""));
+      const visibleText = stripAnsi([stdout, stderr ? `\n오류:\n${stderr}` : ""].filter(Boolean).join(""));
+      bodyNode.textContent = visibleText;
+      block.dataset.searchText = `실시간 출력\n${visibleText}`.toLowerCase();
+      applyOutputFilter();
       if (state.outputPinned) els.output.scrollTop = els.output.scrollHeight;
       streamFlushId = 0;
     });
@@ -353,6 +384,31 @@ async function postStreamJson(path, payload, button) {
     if (!streamFlushId) return;
     cancelAnimationFrame(streamFlushId);
     streamFlushId = 0;
+  }
+}
+
+function scheduleLoadRuns() {
+  if (runsLoadTimer) return;
+  runsLoadTimer = window.setTimeout(() => {
+    runsLoadTimer = 0;
+    loadRuns();
+  }, 160);
+}
+
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = 0;
+    refresh();
+  }, 250);
+}
+
+function parseStreamLine(line, onEvent) {
+  if (!line.trim()) return;
+  try {
+    onEvent(JSON.parse(line));
+  } catch (error) {
+    console.warn("Skipping malformed stream line", error);
   }
 }
 
@@ -408,6 +464,31 @@ function formatStreamResult(data, command, cwdValue, stdout, stderr) {
     stderr ? `${data?.ok ? "보조 출력" : "오류"}:\n${stderr}` : "",
     data?.code !== undefined && data?.code !== null ? `종료 코드: ${data.code}` : "",
   ].filter(Boolean).join("\n\n"));
+}
+
+function formatRunDetail(run) {
+  const lines = [
+    `ID: ${run.id || ""}`,
+    `상태: ${run.status || ""}`,
+    `종류: ${run.kind || ""}`,
+    run.agent ? `에이전트: ${agentName(run.agent)}` : "",
+    run.target ? `대상: ${run.target}` : "",
+    run.key ? `작업: ${run.key}` : "",
+    run.startedAt ? `시작: ${new Date(run.startedAt).toLocaleString()}` : "",
+    run.endedAt ? `종료: ${new Date(run.endedAt).toLocaleString()}` : "",
+    run.durationMs !== undefined ? `소요: ${Math.round(run.durationMs / 1000)}s` : "",
+    run.cwd ? `폴더: ${run.cwd}` : "",
+    run.command ? `명령: ${run.command}` : "",
+    run.code !== undefined && run.code !== null ? `종료 코드: ${run.code}` : "",
+    run.stdoutChars !== undefined ? `stdout 문자 수: ${run.stdoutChars}` : "",
+    run.stderrChars !== undefined ? `stderr 문자 수: ${run.stderrChars}` : "",
+    run.inputReady ? `stdin: 사용 가능` : "",
+    run.inputCount ? `stdin 전송: ${run.inputCount}회` : "",
+    run.error ? `\n오류:\n${run.error}` : "",
+  ].filter(Boolean);
+  lines.push("\n원문 JSON:");
+  lines.push(JSON.stringify(run, null, 2));
+  return lines.join("\n");
 }
 
 async function ensureValidCwdBeforeSend() {

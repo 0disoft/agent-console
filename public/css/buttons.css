@@ -18,14 +18,14 @@ button:hover {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #071b14;
+  color: var(--accent-ink);
   font-weight: 700;
 }
 
 button.secondary-danger.active {
-  border-color: rgba(255, 129, 122, .7);
-  background: #38201f;
-  color: #ffd8d5;
+  border-color: oklch(72% 0.18 25 / .7);
+  background: var(--danger-soft);
+  color: var(--danger-text);
 }
 
 button:disabled {
@@ -76,4 +76,8 @@ button .spinner {
   min-height: 26px;
   padding: 3px 8px;
   font-size: 12px;
+}
+
+.send-actions button {
+  min-height: 42px;
 }
