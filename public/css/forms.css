@@ -39,6 +39,7 @@ textarea.invalid {
 }
 
 .check-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -47,8 +48,38 @@ textarea.invalid {
   margin-top: 22px;
 }
 
+.has-tooltip {
+  cursor: help;
+}
+
 .check-row input {
   width: auto;
+}
+
+.tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 10;
+  width: min(320px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-strong);
+  color: var(--text);
+  box-shadow: 0 10px 24px oklch(0% 0 0 / .28);
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity .14s ease, transform .14s ease;
+}
+
+.has-tooltip:hover .tooltip,
+.has-tooltip:focus-within .tooltip {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .field-error {

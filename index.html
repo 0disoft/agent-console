@@ -108,9 +108,13 @@
               <label for="timeout">제한 시간(초)</label>
               <input id="timeout" type="number" min="30" max="3600" value="600">
             </div>
-            <label class="check-row" for="interactiveInput">
-              <input id="interactiveInput" type="checkbox">
+            <label
+              class="check-row has-tooltip"
+              for="interactiveInput"
+            >
+              <input id="interactiveInput" type="checkbox" aria-describedby="interactiveInputTip">
               <span>stdin 허용</span>
+              <span id="interactiveInputTip" class="tooltip" role="tooltip">CLI가 승인이나 추가 입력을 물어볼 때 최근 실행에서 답장을 보낼 수 있게 stdin 파이프를 엽니다. 필요할 때만 켜세요.</span>
             </label>
             <div class="send-actions">
               <button class="primary" id="sendBtn" type="button" title="Ctrl+Enter로 보내기">보내기</button>
