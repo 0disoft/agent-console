@@ -25,6 +25,10 @@ chmod +x start.sh stop.sh
 ./start.sh
 ```
 
+## License
+
+Agent Console is licensed under the 0BSD license. See [LICENSE](LICENSE).
+
 종료:
 
 ```bash

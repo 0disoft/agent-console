@@ -1,6 +1,7 @@
 {
   "name": "agent-console",
   "private": true,
+  "license": "0BSD",
   "type": "module",
   "scripts": {
     "start": "bun server.ts",
