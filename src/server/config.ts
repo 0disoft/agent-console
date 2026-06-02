@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import type { ToolName, ToolResolution } from "./types";
 
 export const root = resolve(import.meta.dir, "..", "..");
@@ -8,11 +8,13 @@ export const home = process.env.USERPROFILE || process.env.HOME || "";
 export const host = "127.0.0.1";
 export const port = Number(process.env.AGENT_CONSOLE_PORT || 8765);
 export const timeoutDefault = 600;
+export const maxCwdChildDirectories = 80;
 export const configuredModel = process.env.AGENT_CONSOLE_MODEL || "";
 export const configuredProvider = process.env.AGENT_CONSOLE_PROVIDER || "";
 export const defaultModel = configuredModel || "gpt-5.5";
 export const defaultProvider = configuredProvider;
 export const defaultCwd = chooseDefaultCwd();
+export const piPackageName = "@earendil-works/pi-coding-agent";
 
 export type AgentDefinition = {
   id: string;
@@ -108,7 +110,7 @@ export const tools: Record<ToolName, ToolResolution> = Object.fromEntries(
   agentDefinitions.map((agent) => [agent.id, resolveTool(agent.commandName, agent.envName, agent.knownPaths)]),
 );
 
-const bunCommand = process.execPath || "bun";
+export const bunCommand = currentBunCommand();
 
 const localPresets = [
   {
@@ -171,6 +173,11 @@ function executableName(name: string) {
   return process.platform === "win32" ? `${name}.exe` : name;
 }
 
+function currentBunCommand() {
+  const runtime = process.execPath || "";
+  return /(?:^|[\\/])bun(?:\.exe)?$/i.test(runtime) ? runtime : executableName("bun");
+}
+
 function chooseDefaultCwd() {
   const candidates = [
     join(home, "Documents", "workspace"),
@@ -211,6 +218,71 @@ export function resolveCwd(value?: string) {
     throw new Error(`작업 폴더가 디렉터리가 아닙니다: ${candidate}`);
   }
   return candidate;
+}
+
+export function listCwdChildDirectories(value?: string) {
+  const raw = String(value || defaultCwd);
+  const cwd = resolveCwd(raw);
+  const separator = raw.includes("/") && !raw.includes("\\") ? "/" : sep;
+  const directories = readdirSync(cwd, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({
+      name: entry.name,
+      path: `${formatPathWithSeparator(join(cwd, entry.name), separator)}${separator}`,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }));
+
+  return {
+    cwd,
+    directories: directories.slice(0, maxCwdChildDirectories),
+    truncated: directories.length > maxCwdChildDirectories,
+  };
+}
+
+export type OpenFolderLaunchResult = {
+  ok: boolean;
+  cwd: string;
+  command: string[];
+  stderr?: string;
+};
+
+export type OpenFolderLauncher = (command: string[]) => { exitCode?: number | null; stderr?: string };
+
+export function openFolderCommand(cwd: string) {
+  if (process.platform === "win32") return ["explorer.exe", cwd];
+  if (process.platform === "darwin") return ["open", cwd];
+  return ["xdg-open", cwd];
+}
+
+export function openCwdFolder(value?: string, launcher: OpenFolderLauncher = launchFolder) {
+  const cwd = resolveCwd(value);
+  const command = openFolderCommand(cwd);
+  const result = launcher(command);
+  const ok = result.exitCode === undefined || result.exitCode === null || result.exitCode === 0;
+  return {
+    ok,
+    cwd,
+    command,
+    stderr: ok ? "" : (result.stderr || `폴더 열기 명령이 실패했습니다: ${result.exitCode}`),
+  };
+}
+
+function formatPathWithSeparator(path: string, separator: string) {
+  return separator === "/" ? path.replaceAll("\\", "/") : path;
+}
+
+function launchFolder(command: string[]) {
+  const child = Bun.spawn(command, {
+    cwd: defaultCwd,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  child.unref?.();
+  return { exitCode: null };
 }
 
 export function envNameForTool(target: ToolName) {

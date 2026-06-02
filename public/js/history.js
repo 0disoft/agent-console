@@ -4,8 +4,23 @@ import { readJsonStorage } from "./storage.js";
 import { autoGrowPrompt } from "./ui.js";
 
 export function renderCwdHistory() {
-  const entries = readJsonStorage(storageKeys.cwdHistory, []).filter(Boolean).slice(0, 10);
+  const suggestions = Array.isArray(state.cwdSuggestions) ? state.cwdSuggestions : [];
+  const seen = new Set();
+  const entries = readJsonStorage(storageKeys.cwdHistory, [])
+    .filter(Boolean)
+    .filter((entry) => {
+      if (seen.has(entry)) return false;
+      seen.add(entry);
+      return !suggestions.some((suggestion) => suggestion.path === entry);
+    })
+    .slice(0, 10);
   els.cwdHistory.replaceChildren();
+  for (const suggestion of suggestions) {
+    const option = document.createElement("option");
+    option.value = suggestion.path;
+    option.label = suggestion.name;
+    els.cwdHistory.appendChild(option);
+  }
   for (const entry of entries) {
     const option = document.createElement("option");
     option.value = entry;

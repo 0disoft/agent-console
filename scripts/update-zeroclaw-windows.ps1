@@ -20,6 +20,34 @@ function Download-File($url, $path) {
     Invoke-WebRequest -Headers $headers -Uri $url -OutFile $path
 }
 
+function Get-Sha256Hex($path) {
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Expand-ZipArchive($zipPath, $destinationPath) {
+    if (Get-Command Expand-Archive -ErrorAction SilentlyContinue) {
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $destinationPath -Force
+        return
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $destinationPath)
+}
+
 function Add-UserPath($path) {
     $current = [Environment]::GetEnvironmentVariable("Path", "User")
     $parts = @()
@@ -69,13 +97,13 @@ try {
         throw "Could not find $assetName in SHA256SUMS."
     }
     $expected = ($sumLine -split "\s+")[0].ToLowerInvariant()
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hex $zipPath
     if ($actual -ne $expected) {
         throw "SHA256 mismatch. Expected $expected, got $actual"
     }
     Write-Host "Checksum verified: $actual"
 
-    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+    Expand-ZipArchive $zipPath $extractDir
     $newExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter "zeroclaw.exe" | Select-Object -First 1
     if (-not $newExe) {
         throw "Could not find zeroclaw.exe in the downloaded archive."

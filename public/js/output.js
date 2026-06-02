@@ -59,13 +59,13 @@ export function renderOutputBlock(entry) {
   renderOutputText(body, String(entry.text || ""));
 
   block.append(head, body);
-  els.output.appendChild(block);
+  els.output.prepend(block);
   while (els.output.children.length > maxOutputBlocks) {
-    els.output.removeChild(els.output.firstElementChild);
+    els.output.removeChild(els.output.lastElementChild);
   }
   requestAnimationFrame(() => {
     if (state.outputPinned) {
-      els.output.scrollTop = els.output.scrollHeight;
+      els.output.scrollTop = 0;
       updateOutputJump();
     } else {
       els.outputJumpBtn.hidden = false;
@@ -182,8 +182,8 @@ async function copyOutputText(text, button) {
   }
 }
 
-export function scrollOutputToBottom() {
-  els.output.scrollTop = els.output.scrollHeight;
+export function scrollOutputToTop() {
+  els.output.scrollTop = 0;
   state.outputPinned = true;
   updateOutputJump();
 }

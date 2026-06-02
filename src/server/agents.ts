@@ -5,12 +5,14 @@ import {
   agentDefinitions,
   agentLabel,
   agentMetadata,
+  bunCommand,
   configuredModel,
   defaultCwd,
   defaultModel,
   defaultProvider,
   envNameForTool,
   home,
+  piPackageName,
   presetMetadata,
   resolveCwd,
   tools,
@@ -71,6 +73,7 @@ export async function updateAgent(target: string, cwd?: string, signal?: AbortSi
   }
   await assertToolInstalled(target);
   if (target === "hermes") return updateHermes(cwd, signal);
+  if (target === "pi") return updatePi(cwd, signal);
   return runCommand(updateTargets[target], { cwd, timeout: 1800, signal });
 }
 
@@ -100,6 +103,25 @@ async function updateHermes(cwd?: string, signal?: AbortSignal) {
   }
 }
 
+async function updatePi(cwd?: string, signal?: AbortSignal) {
+  const first = await runCommand(updateTargets.pi, { cwd, timeout: 1800, signal });
+  if (first.ok || !needsBunPiUpdate(first)) {
+    return first;
+  }
+
+  const fallback = await runCommand([bunCommand, "update", "--global", "--latest", piPackageName], {
+    cwd,
+    timeout: 1800,
+    signal,
+  });
+  return mergeRetryResult(first, fallback, `Pi is installed through bun, so Agent Console is retrying with: bun update --global --latest ${piPackageName}.`);
+}
+
+function needsBunPiUpdate(result: RunResult) {
+  const output = `${result.stdout}\n${result.stderr}`;
+  return output.includes("Detected install method: bun") || output.includes("pi self-update on Windows is only supported for npm and pnpm installs");
+}
+
 function mergeRetryResult(first: RunResult, second: RunResult, note: string): RunResult {
   return {
     ok: second.ok,
@@ -108,15 +130,19 @@ function mergeRetryResult(first: RunResult, second: RunResult, note: string): Ru
       note,
       "",
       "First attempt:",
-      first.stdout || first.stderr || `(exit ${first.code})`,
+      resultOutput(first),
       "",
       "Retry result:",
-      second.stdout || second.stderr || `(exit ${second.code})`,
+      resultOutput(second),
     ].join("\n"),
     stderr: second.ok ? "" : second.stderr,
     command: `${first.command} -> ${second.command}`,
     cwd: second.cwd || first.cwd,
   };
+}
+
+function resultOutput(result: RunResult) {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n") || `(exit ${result.code})`;
 }
 
 export async function updateAll(cwd?: string, signal?: AbortSignal) {
@@ -353,6 +379,7 @@ export function chatCommand(payload: Record<string, unknown>) {
   }
 
   if (definition.chatKind === "zeroclaw") {
+    const scopedPrompt = speedPrompt(zeroclawScopedPrompt(prompt, payload.cwd), speed);
     const args = [
       tools[agent].command,
       "agent",
@@ -368,7 +395,7 @@ export function chatCommand(payload: Record<string, unknown>) {
 
     args.push(
       "--message",
-      promptForSpeed,
+      scopedPrompt,
     );
 
     return {
@@ -400,4 +427,17 @@ function speedPrompt(prompt: string, speed: string) {
     return `${prompt}\n\n[응답 모드: 균형] 필요한 확인만 하고 간결하게 답하세요.`;
   }
   return `${prompt}\n\n[응답 모드: 깊게] 정확성을 우선하고 필요한 도구와 검증을 사용하세요.`;
+}
+
+function zeroclawScopedPrompt(prompt: string, cwdValue: unknown) {
+  const cwd = resolveCwd(String(cwdValue || defaultCwd));
+  return [
+    "[Agent Console 작업 폴더 지시]",
+    `실제 작업 폴더는 다음 절대경로입니다: ${cwd}`,
+    "사용자가 '작업 폴더', '현재 폴더', '프로젝트 루트', 'repo root'라고 말하면 반드시 위 경로를 의미합니다.",
+    "상대 경로로 파일이나 폴더를 만들라는 요청은 반드시 위 작업 폴더 기준으로 해석하세요.",
+    "ZeroClaw 내부 기본 workspace나 홈 디렉터리를 작업 위치로 사용하지 마세요.",
+    "",
+    prompt,
+  ].join("\n");
 }

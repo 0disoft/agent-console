@@ -1,11 +1,11 @@
 export const els = {
   statusList: document.getElementById("statusList"),
-  agentCards: document.getElementById("agentCards"),
   output: document.getElementById("output"),
   outputSearch: document.getElementById("outputSearch"),
   outputSearchCount: document.getElementById("outputSearchCount"),
   outputJumpBtn: document.getElementById("outputJumpBtn"),
   cwd: document.getElementById("cwd"),
+  openCwdBtn: document.getElementById("openCwdBtn"),
   cwdHistory: document.getElementById("cwdHistory"),
   cwdStatus: document.getElementById("cwdStatus"),
   promptBox: document.getElementById("prompt"),

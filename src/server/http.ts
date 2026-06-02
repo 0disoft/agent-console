@@ -9,6 +9,8 @@ import {
 import {
   defaultCwd,
   host,
+  listCwdChildDirectories,
+  openCwdFolder,
   port,
   presets,
   publicDir,
@@ -72,6 +74,17 @@ export function startServer() {
       }
       if (request.method === "GET" && url.pathname === "/api/runs") {
         return jsonResponse({ runs: listRecentRuns(normalizeRunHistoryLimit(url.searchParams.get("limit"))) });
+      }
+      if (request.method === "GET" && url.pathname === "/api/cwd-children") {
+        try {
+          return jsonResponse({ ok: true, ...listCwdChildDirectories(url.searchParams.get("cwd") || defaultCwd) });
+        } catch (error) {
+          return jsonResponse({
+            ok: false,
+            directories: [],
+            stderr: error instanceof Error ? error.message : String(error),
+          }, 400);
+        }
       }
       if (request.method === "GET" && url.pathname.startsWith("/api/runs/")) {
         const id = url.pathname.split("/").at(-1) || "";
@@ -242,6 +255,11 @@ async function handlePost(request: Request, route: string) {
     if (route === "/api/validate-cwd") {
       const cwd = resolveCwd(String(payload.cwd || defaultCwd));
       return jsonResponse({ ok: true, cwd });
+    }
+    if (route === "/api/open-cwd") {
+      const result = openCwdFolder(String(payload.cwd || defaultCwd));
+      if (!result.ok) throw new Error(result.stderr || "작업 폴더를 열지 못했습니다.");
+      return jsonResponse({ ok: true, cwd: result.cwd });
     }
     return jsonResponse({ ok: false, stderr: "Not found" }, 404);
   } catch (error) {

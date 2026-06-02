@@ -16,30 +16,107 @@ export function setButtonBusy(button, busy) {
 }
 
 export function setRequestRunning(controller, button, label = "작업") {
-  state.activeRequest = controller ? { controller, button, label } : null;
-  els.stopBtn.disabled = !controller;
-  els.inlineStopBtn.disabled = !controller;
-  els.inlineStopBtn.classList.toggle("active", Boolean(controller));
+  state.activeRequest = controller ? { controller, button, label, startedAt: Date.now() } : null;
+  syncRequestTimer();
+  renderRequestControls();
+}
+
+export function setChatRequestRunning(agent, controller, button, label = "작업") {
+  if (!agent) return;
+  if (controller) {
+    state.activeChatRequests[agent] = { controller, button, label, startedAt: Date.now() };
+  } else {
+    delete state.activeChatRequests[agent];
+  }
+  syncRequestTimer();
+  renderRequestControls();
+}
+
+export function selectedChatRequest() {
+  return state.activeChatRequests[state.activeAgent] || null;
+}
+
+export function firstRunningChatRequest() {
+  return runningChatEntries()[0] || null;
+}
+
+export function renderRequestControls() {
+  const selectedChat = selectedChatRequest();
+  const chatEntries = runningChatEntries();
+  const installed = state.installedTools[state.activeAgent] !== false;
+  const requestForStop = selectedChat || state.activeRequest || chatEntries[0]?.[1] || null;
+
+  setStopControls(Boolean(requestForStop));
+
+  if (selectedChat) {
+    setButtonBusy(els.sendBtn, true);
+    renderActiveRequest(selectedChat);
+    return;
+  }
+
+  setButtonBusy(els.sendBtn, false);
+  els.sendBtn.disabled = !installed;
+
+  if (state.activeRequest) {
+    renderActiveRequest(state.activeRequest);
+    return;
+  }
+
+  if (chatEntries.length) {
+    const [agent, request] = chatEntries[0];
+    renderRunBanner(otherChatLabel(agent, chatEntries), elapsedSeconds(request));
+    els.runStatus.textContent = `${chatEntries.length}개`;
+    return;
+  }
+
+  els.runStatus.textContent = "대기";
+  els.activeRunBanner.hidden = true;
+  delete els.activeRunBanner.dataset.label;
+  els.activeRunBanner.replaceChildren();
+}
+
+function syncRequestTimer() {
+  const hasRunningRequest = Boolean(state.activeRequest) || runningChatEntries().length > 0;
   if (state.runTimer) {
     clearInterval(state.runTimer);
     state.runTimer = null;
   }
-  if (!controller) {
-    els.runStatus.textContent = "대기";
-    els.activeRunBanner.hidden = true;
-    delete els.activeRunBanner.dataset.label;
-    els.activeRunBanner.replaceChildren();
+  if (hasRunningRequest) {
+    state.runTimer = setInterval(renderRequestControls, 1000);
+  }
+}
+
+function setStopControls(enabled) {
+  els.stopBtn.disabled = !enabled;
+  els.inlineStopBtn.disabled = !enabled;
+  els.inlineStopBtn.classList.toggle("active", enabled);
+}
+
+function renderActiveRequest(request) {
+  const seconds = elapsedSeconds(request);
+  els.runStatus.textContent = `${seconds}s`;
+  renderRunBanner(request.label, seconds);
+}
+
+function elapsedSeconds(request) {
+  return Math.max(0, Math.floor((Date.now() - request.startedAt) / 1000));
+}
+
+function runningChatEntries() {
+  return Object.entries(state.activeChatRequests).filter(([, request]) => Boolean(request?.controller));
+}
+
+function otherChatLabel(agent, entries) {
+  const names = entries.map(([id]) => agentDisplayName(id));
+  if (entries.length === 1) return `다른 실행 중: ${agentDisplayName(agent)}`;
+  return `다른 실행 ${entries.length}개: ${names.join(", ")}`;
+}
+
+export function forgetChatRequest(agent, controller) {
+  if (state.activeChatRequests[agent]?.controller !== controller) {
     return;
   }
-  const startedAt = Date.now();
-  const updateRunStatus = () => {
-    const seconds = Math.floor((Date.now() - startedAt) / 1000);
-    els.runStatus.textContent = `${seconds}s`;
-    renderRunBanner(label, seconds);
-  };
-  els.runStatus.innerHTML = '<span class="spinner"></span>';
-  renderRunBanner(label, 0);
-  state.runTimer = setInterval(updateRunStatus, 1000);
+  setChatRequestRunning(agent, null, null);
 }
 
 export function renderRunBanner(label, seconds) {
@@ -80,9 +157,6 @@ export function renderStatus(data) {
   els.statusList.replaceChildren(...(entries.length
     ? entries.map(([name, tool]) => statusSummaryRow(name, tool))
     : [emptyState("에이전트 상태가 없습니다.")]));
-  els.agentCards.replaceChildren(...(entries.length
-    ? entries.map(([name, tool]) => agentCard(name, tool))
-    : [emptyState("표시할 에이전트가 없습니다.", "panel empty-state")]));
   renderAgentChoices();
   renderManagementButtons();
   updateInstallState();
@@ -113,7 +187,7 @@ export function updateAgentUi() {
     button.setAttribute("aria-selected", selected ? "true" : "false");
     button.tabIndex = selected ? 0 : -1;
   });
-  els.sendBtn.disabled = state.installedTools[state.activeAgent] === false;
+  renderRequestControls();
 }
 
 export function updateInstallState() {
@@ -144,7 +218,7 @@ export function updateInstallState() {
     const next = state.agents.find((agent) => agent.supportsChat && state.installedTools[agent.id] !== false)?.id;
     if (next) selectAgent(next);
   }
-  els.sendBtn.disabled = state.installedTools[state.activeAgent] === false;
+  renderRequestControls();
 }
 
 export function selectAgent(agent, focus = false) {
@@ -286,6 +360,7 @@ function runStatusBadge(status) {
 
 function runStatusLabel(status) {
   if (status === "ok") return "완료";
+  if (status === "partial") return "부분";
   if (status === "error") return "오류";
   if (status === "stopped") return "중단";
   if (status === "waiting_input") return "대기";
@@ -327,34 +402,19 @@ function shortPath(path) {
 }
 
 function statusSummaryRow(name, tool) {
-  const row = document.createElement("div");
+  const row = document.createElement("details");
   row.className = "status-summary-row";
+  row.setAttribute("aria-label", `${name} 상태 상세`);
+
+  const summary = document.createElement("summary");
+  summary.className = "status-summary";
+
   const nameNode = document.createElement("strong");
   nameNode.textContent = name;
-  row.append(statusDot(tool.ok), nameNode, statePill(tool));
+
+  summary.append(statusDot(tool.ok), nameNode, statePill(tool));
+  row.append(summary, statusDetail(name, tool));
   return row;
-}
-
-function agentCard(name, tool) {
-  const card = document.createElement("article");
-  card.className = "panel agent";
-  card.setAttribute("role", "group");
-  card.setAttribute("aria-label", `${name} 상태`);
-
-  const headingRow = document.createElement("div");
-  headingRow.className = "row";
-  const heading = document.createElement("h2");
-  heading.textContent = name;
-  headingRow.append(statusDot(tool.ok), heading);
-  card.append(headingRow);
-
-  card.append(
-    mutedLine(tool.installed ? (tool.summary || "") : "설치 안 됨"),
-    mutedLine(`${tool.path || ""}${tool.source ? ` (${tool.source})` : ""}`),
-  );
-  if (tool.models) card.append(mutedLine(tool.models));
-  if (tool.message) card.append(mutedLine(tool.message));
-  return card;
 }
 
 function statusDot(ok) {
@@ -375,10 +435,31 @@ function statePill(tool) {
   return pill;
 }
 
-function mutedLine(text) {
+function statusDetail(name, tool) {
+  const detail = document.createElement("div");
+  detail.className = "status-detail";
+  detail.setAttribute("role", "tooltip");
+
+  const rows = [
+    ["이름", name],
+    ["버전", tool.installed ? (tool.summary || "") : "설치 안 됨"],
+    ["경로", `${tool.path || ""}${tool.source ? ` (${tool.source})` : ""}`],
+    ["모델", tool.models || ""],
+    ["메시지", tool.message || ""],
+  ].filter(([, value]) => String(value || "").trim());
+
+  detail.replaceChildren(...rows.map(([label, value]) => statusDetailLine(label, value)));
+  return detail;
+}
+
+function statusDetailLine(label, value) {
   const line = document.createElement("div");
-  line.className = "muted";
-  line.textContent = text || "";
+  line.className = "status-detail-line";
+  const key = document.createElement("span");
+  key.textContent = label;
+  const text = document.createElement("span");
+  text.textContent = value;
+  line.append(key, text);
   return line;
 }
 

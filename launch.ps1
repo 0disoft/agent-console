@@ -28,7 +28,7 @@ Start-Process powershell -WindowStyle Hidden -ArgumentList @(
 )
 
 try {
-    bun run start
+    bun server.ts
 }
 finally {
     Write-Host ""

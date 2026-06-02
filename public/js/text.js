@@ -27,6 +27,7 @@ export function speedName(value) {
 
 export function typeLabel(type) {
   if (type === "ok") return "완료";
+  if (type === "partial") return "부분 완료";
   if (type === "error") return "오류";
   if (type === "warning") return "알림";
   if (type === "running") return "실행 중";

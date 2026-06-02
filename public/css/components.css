@@ -3,13 +3,12 @@
   background: var(--panel-strong);
 }
 
-.agent {
+.chat-context {
   display: grid;
-  gap: 7px;
-  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 920px;
 }
 
-.agent h2,
 .panel h2 {
   margin: 0;
   font-size: 14px;
@@ -37,11 +36,73 @@
 }
 
 .status-summary-row {
+  position: relative;
+  min-height: 28px;
+}
+
+.status-summary-row > summary {
+  list-style: none;
+}
+
+.status-summary-row > summary::-webkit-details-marker {
+  display: none;
+}
+
+.status-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 28px;
+  border-radius: var(--radius);
+  cursor: default;
+}
+
+.status-summary:hover,
+.status-summary:focus-visible {
+  background: var(--panel-strong);
+}
+
+.status-detail {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  gap: 7px;
+  max-height: min(280px, 52vh);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--terminal);
+  box-shadow: 0 12px 28px oklch(0% 0 0 / .34);
+}
+
+.status-summary-row:hover .status-detail,
+.status-summary-row:focus-within .status-detail,
+.status-summary-row[open] .status-detail {
+  display: grid;
+}
+
+.status-detail-line {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.status-detail-line > span:first-child {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.status-detail-line > span:last-child {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .empty-state {
@@ -251,6 +312,12 @@
   background: var(--accent-soft);
   color: oklch(94% 0.045 170);
   border-color: oklch(76% 0.12 170 / .38);
+}
+
+.run-badge.partial {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+  border-color: oklch(84% 0.14 82 / .38);
 }
 
 .run-badge.error {

@@ -9,20 +9,50 @@ import { state } from "./state.js";
 import { rememberCwd, rememberPrompt } from "./storage.js";
 import { agentName, stripAnsi } from "./text.js";
 import { renderCwdHistory } from "./history.js";
-import { renderRuns, renderStatus, requestLabel, setButtonBusy, setRequestRunning } from "./ui.js";
+import {
+  firstRunningChatRequest,
+  forgetChatRequest,
+  renderRuns,
+  renderStatus,
+  requestLabel,
+  selectedChatRequest,
+  setButtonBusy,
+  setChatRequestRunning,
+  setRequestRunning,
+} from "./ui.js";
 
 let runsLoadTimer = 0;
 let refreshTimer = 0;
 
 export function abortActiveRequest() {
-  if (!state.activeRequest) return false;
-  state.activeRequest.abortedByUser = true;
-  state.abortedControllers.add(state.activeRequest.controller);
-  state.activeRequest.controller.abort();
-  appendBlock("요청 중단을 보냈습니다.", "warning");
-  setButtonBusy(state.activeRequest.button, false);
-  setRequestRunning(null, null);
-  return true;
+  const selectedChat = selectedChatRequest();
+  if (selectedChat) {
+    abortRequest(selectedChat, state.activeAgent);
+    return true;
+  }
+  if (state.activeRequest) {
+    abortRequest(state.activeRequest);
+    return true;
+  }
+  const otherChat = firstRunningChatRequest();
+  if (otherChat) {
+    abortRequest(otherChat[1], otherChat[0]);
+    return true;
+  }
+  return false;
+}
+
+function abortRequest(request, agent = "") {
+  request.abortedByUser = true;
+  state.abortedControllers.add(request.controller);
+  request.controller.abort();
+  appendBlock(`${agent ? `${agentName(agent)} ` : ""}요청 중단을 보냈습니다.`, "warning");
+  if (agent) {
+    setChatRequestRunning(agent, null, null);
+  } else {
+    setButtonBusy(request.button, false);
+    setRequestRunning(null, null);
+  }
 }
 
 export async function refresh() {
@@ -114,6 +144,75 @@ export async function sendRunInput(id, text) {
   }
 }
 
+export async function openWorkingFolder() {
+  const cwd = els.cwd.value.trim();
+  if (!cwd) {
+    els.cwd.classList.add("invalid");
+    els.cwdStatus.textContent = "작업 폴더를 입력하세요.";
+    els.cwd.focus();
+    return;
+  }
+  els.openCwdBtn.disabled = true;
+  els.openCwdBtn.classList.add("busy");
+  els.openCwdBtn.setAttribute("aria-busy", "true");
+  try {
+    const res = await fetch("/api/open-cwd", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd }),
+    });
+    const data = await parseJsonResponse(res);
+    els.cwd.value = data.cwd || cwd;
+    els.cwd.classList.remove("invalid");
+    els.cwdStatus.textContent = "";
+    rememberCwd(els.cwd.value, renderCwdHistory);
+  } catch (error) {
+    els.cwd.classList.add("invalid");
+    els.cwdStatus.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    els.openCwdBtn.disabled = false;
+    els.openCwdBtn.classList.remove("busy");
+    els.openCwdBtn.removeAttribute("aria-busy");
+  }
+}
+
+export function scheduleCwdChildren(value) {
+  const raw = String(value || "");
+  if (state.cwdSuggestionTimer) {
+    clearTimeout(state.cwdSuggestionTimer);
+    state.cwdSuggestionTimer = 0;
+  }
+  state.cwdSuggestionController?.abort();
+  if (!/[\\/]$/.test(raw) || raw.length < 2) {
+    state.cwdSuggestions = [];
+    renderCwdHistory();
+    return;
+  }
+  const controller = new AbortController();
+  state.cwdSuggestionController = controller;
+  state.cwdSuggestionTimer = window.setTimeout(async () => {
+    state.cwdSuggestionTimer = 0;
+    try {
+      const res = await fetch(`/api/cwd-children?cwd=${encodeURIComponent(raw)}`, {
+        signal: controller.signal,
+      });
+      const data = await parseJsonResponse(res);
+      if (controller.signal.aborted || els.cwd.value !== raw) return;
+      state.cwdSuggestions = Array.isArray(data.directories) ? data.directories : [];
+      renderCwdHistory();
+    } catch {
+      if (!controller.signal.aborted && els.cwd.value === raw) {
+        state.cwdSuggestions = [];
+        renderCwdHistory();
+      }
+    } finally {
+      if (state.cwdSuggestionController === controller) {
+        state.cwdSuggestionController = null;
+      }
+    }
+  }, 120);
+}
+
 export function connectEvents() {
   if (state.eventsSocket || state.eventsController) return;
   if ("WebSocket" in window) {
@@ -200,6 +299,10 @@ function handleRunEvent(event, data) {
 
 export async function postJson(path, payload, button) {
   if (path === "/api/chat") {
+    if (state.activeChatRequests[payload.agent]) {
+      appendBlock(`${agentName(payload.agent)} 요청이 이미 실행 중입니다. 해당 탭에서 중단하거나 완료를 기다려주세요.`, "warning");
+      return;
+    }
     const validCwd = await ensureValidCwdBeforeSend();
     if (!validCwd) return;
     payload.cwd = validCwd;
@@ -228,11 +331,12 @@ export async function postJson(path, payload, button) {
       data.command ? `명령: ${data.command}` : "",
       data.cwd ? `폴더: ${data.cwd}` : "",
       data.stdout || "",
-      data.stderr ? `${data.ok ? "보조 출력" : "오류"}:\n${data.stderr}` : "",
+      data.stderr ? `${commandResultState(data).stderrLabel}:\n${data.stderr}` : "",
       data.code !== undefined && data.code !== null ? `종료 코드: ${data.code}` : "",
     ].filter(Boolean).join("\n\n");
-    updateOutputBlock(block, body || JSON.stringify(data, null, 2), data.ok ? "ok" : "error");
-    notifyCompletion(data.ok ? "Agent Console 완료" : "Agent Console 오류", `${payload.agent ? agentName(payload.agent) : "관리 작업"} 실행이 끝났습니다.`, startedAt);
+    const resultState = commandResultState(data);
+    updateOutputBlock(block, body || JSON.stringify(data, null, 2), resultState.type, resultState.label);
+    notifyCompletion(resultState.notificationTitle, `${payload.agent ? agentName(payload.agent) : "관리 작업"} 실행이 끝났습니다.`, startedAt);
   } catch (error) {
     const abortedByUser = state.abortedControllers.has(controller);
     if (!(controller.signal.aborted && abortedByUser)) {
@@ -250,8 +354,9 @@ export async function postJson(path, payload, button) {
 }
 
 async function postStreamJson(path, payload, button) {
-  if (state.activeRequest) {
-    appendBlock("다른 요청이 실행 중입니다. Esc 또는 중단 버튼으로 먼저 멈출 수 있습니다.", "warning");
+  const agent = payload.agent || state.activeAgent;
+  if (state.activeChatRequests[agent]) {
+    appendBlock(`${agentName(agent)} 요청이 이미 실행 중입니다. 해당 탭에서 중단하거나 완료를 기다려주세요.`, "warning");
     return;
   }
   const controller = new AbortController();
@@ -265,8 +370,7 @@ async function postStreamJson(path, payload, button) {
   if (payload.cwd) rememberCwd(payload.cwd, renderCwdHistory);
   if (payload.prompt) rememberPrompt(payload.prompt, state);
   requestNotificationPermission();
-  setRequestRunning(controller, button, requestLabel("/api/chat", payload));
-  setButtonBusy(button, true);
+  setChatRequestRunning(agent, controller, button, requestLabel("/api/chat", payload));
   const block = appendBlock("", "running", "실시간 출력", false);
   const bodyNode = block.querySelector(".output-body");
   try {
@@ -295,9 +399,10 @@ async function postStreamJson(path, payload, button) {
     buffer += decoder.decode();
     parseStreamLine(buffer, handleStreamEvent);
     cancelStreamFlush();
-    const resultText = formatStreamResult(finalData, command, cwdValue, stdout, stderr);
-    updateOutputBlock(block, resultText, finalData?.ok ? "ok" : "error", finalData?.ok ? "완료" : "오류");
-    notifyCompletion(finalData?.ok ? "Agent Console 완료" : "Agent Console 오류", `${agentName(payload.agent)} 실행이 끝났습니다.`, startedAt);
+    const resultState = commandResultState({ ...finalData, stdout, stderr });
+    const resultText = formatStreamResult(finalData, command, cwdValue, stdout, stderr, resultState);
+    updateOutputBlock(block, resultText, resultState.type, resultState.label);
+    notifyCompletion(resultState.notificationTitle, `${agentName(payload.agent)} 실행이 끝났습니다.`, startedAt);
   } catch (error) {
     const abortedByUser = state.abortedControllers.has(controller);
     if (!(controller.signal.aborted && abortedByUser)) {
@@ -312,16 +417,15 @@ async function postStreamJson(path, payload, button) {
     }
     notifyCompletion("Agent Console 중단", controller.signal.aborted ? "요청이 중단되었습니다." : "요청이 실패했습니다.", startedAt);
   } finally {
-    setButtonBusy(button, false);
-    if (state.activeRequest?.controller === controller) {
-      setRequestRunning(null, null);
-    }
+    forgetChatRequest(agent, controller);
   }
 
   function handleStreamEvent(event) {
     if (event.type === "start") {
       command = event.command || command;
       cwdValue = event.cwd || cwdValue;
+    } else if (event.type === "heartbeat") {
+      return;
     } else if (event.type === "stdout") {
       stdout += event.text || "";
     } else if (event.type === "stderr") {
@@ -341,7 +445,7 @@ async function postStreamJson(path, payload, button) {
       block.dataset.outputText = visibleText;
       block.dataset.searchText = `실시간 출력\n${visibleText}`.toLowerCase();
       applyOutputFilter();
-      if (state.outputPinned) els.output.scrollTop = els.output.scrollHeight;
+      if (state.outputPinned) els.output.scrollTop = 0;
       streamFlushId = 0;
     });
   }
@@ -422,14 +526,50 @@ export async function validateCwd() {
   }
 }
 
-function formatStreamResult(data, command, cwdValue, stdout, stderr) {
+function formatStreamResult(data, command, cwdValue, stdout, stderr, state = commandResultState({ ...data, stdout, stderr })) {
   return stripAnsi([
     command ? `명령: ${command}` : "",
     cwdValue ? `폴더: ${cwdValue}` : "",
     stdout || "",
-    stderr ? `${data?.ok ? "보조 출력" : "오류"}:\n${stderr}` : "",
+    stderr ? `${state.stderrLabel}:\n${stderr}` : "",
     data?.code !== undefined && data?.code !== null ? `종료 코드: ${data.code}` : "",
   ].filter(Boolean).join("\n\n"));
+}
+
+function commandResultState(data = {}) {
+  if (data.ok) {
+    return {
+      type: "ok",
+      label: "완료",
+      stderrLabel: "보조 출력",
+      notificationTitle: "Agent Console 완료",
+    };
+  }
+  if (hasUsableStdout(data.stdout) && isPartialCompletionStderr(data.stderr)) {
+    return {
+      type: "partial",
+      label: "부분 완료",
+      stderrLabel: "주의",
+      notificationTitle: "Agent Console 부분 완료",
+    };
+  }
+  return {
+    type: "error",
+    label: "오류",
+    stderrLabel: "오류",
+    notificationTitle: "Agent Console 오류",
+  };
+}
+
+function hasUsableStdout(stdout) {
+  return stripAnsi(String(stdout || "")).trim().length > 0;
+}
+
+function isPartialCompletionStderr(stderr) {
+  const text = stripAnsi(String(stderr || ""));
+  return /Agent loop aborted by loop detector/i.test(text)
+    || /Circuit breaker: tool 'shell' called/i.test(text)
+    || /loop detector blocked tool call/i.test(text);
 }
 
 function formatRunDetail(run) {

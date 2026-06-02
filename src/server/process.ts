@@ -127,6 +127,7 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
       let child: ReturnType<typeof Bun.spawn> | null = null;
       let exited = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
       let closed = false;
       const send = (event: Record<string, unknown>) => {
         if (closed) return false;
@@ -159,6 +160,9 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
 
         send({ type: "start", command, cwd });
         options.onStart?.({ command, cwd });
+        heartbeat = setInterval(() => {
+          send({ type: "heartbeat", at: new Date().toISOString() });
+        }, 2000);
         timer = setTimeout(() => {
           timedOut = true;
           if (child) killProcess(child);
@@ -224,6 +228,7 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
         options.onDone?.(result);
       } finally {
         if (timer) clearTimeout(timer);
+        if (heartbeat) clearInterval(heartbeat);
         options.signal?.removeEventListener("abort", abortHandler);
         if (child && !exited) killProcess(child);
         if (!closed) {

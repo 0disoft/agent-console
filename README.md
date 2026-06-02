@@ -73,7 +73,7 @@ bun run start
 AGENT_CONSOLE_PROVIDER="openai" AGENT_CONSOLE_MODEL="gpt-5.5" bun run start
 ```
 
-설치되지 않은 에이전트는 상태가 `설치 안 됨`으로 표시되고, 해당 채팅/관리/업데이트 버튼은 자동으로 비활성화됩니다. `전체 업데이트`는 설치되어 있고 Agent Console에 업데이트 명령이 등록된 에이전트만 대상으로 실행됩니다. ZeroClaw는 자체 `update` 서브커맨드 대신 공식 GitHub 릴리스의 Windows prebuilt asset을 내려받아 `SHA256SUMS`로 검증한 뒤 `~/.zeroclaw/bin/zeroclaw.exe`에 설치합니다.
+설치되지 않은 에이전트는 상태가 `설치 안 됨`으로 표시되고, 해당 채팅/관리/업데이트 버튼은 자동으로 비활성화됩니다. `전체 업데이트`는 설치되어 있고 Agent Console에 업데이트 명령이 등록된 에이전트만 대상으로 실행됩니다. Pi는 먼저 `pi update`를 실행하고, Windows bun 설치에서 자체 업데이트가 거부되면 `bun update --global --latest @earendil-works/pi-coding-agent`로 재시도합니다. ZeroClaw는 자체 `update` 서브커맨드 대신 공식 GitHub 릴리스의 Windows prebuilt asset을 내려받아 `SHA256SUMS`로 검증한 뒤 `~/.zeroclaw/bin/zeroclaw.exe`에 설치합니다.
 
 ## 편의 기능
 
@@ -100,6 +100,7 @@ Codex 같은 로컬 자동화 도구가 Agent Console 상태를 구조적으로 
 - `GET /api/runs/<runId>`: 특정 실행 기록을 반환합니다.
 - `POST /api/runs/<runId>/stop`: 진행 중인 실행을 중단합니다.
 - `POST /api/runs/<runId>/input`: 진행 중인 실행의 stdin에 텍스트를 씁니다. 기본적으로 개행을 붙이며, `{ "newline": false }`로 끌 수 있습니다.
+- `GET /api/cwd-children?cwd=<path>`: 작업 폴더 입력 자동완성을 위해 지정 폴더의 즉시 하위 디렉터리만 제한된 개수로 반환합니다.
 
 완료된 실행 이력은 `.agent-console/runs.jsonl`에 JSONL로 저장됩니다. 이 폴더는 로컬 런타임 상태라서 Git에는 포함하지 않습니다.
 

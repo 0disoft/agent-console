@@ -55,6 +55,10 @@
   border-color: oklch(76% 0.12 170 / .55);
 }
 
+.output-block.partial {
+  border-color: oklch(84% 0.14 82 / .65);
+}
+
 .output-block.error {
   border-color: oklch(72% 0.18 25 / .65);
 }
@@ -228,7 +232,7 @@
 .output-jump {
   position: absolute;
   right: 18px;
-  bottom: 18px;
+  top: 18px;
   min-height: 32px;
   padding: 6px 10px;
   border-color: oklch(72% 0.14 255 / .36);

@@ -14,6 +14,8 @@ export type RunResult = {
   cwd: string;
 };
 
+export type CompletedRunStatus = "ok" | "partial" | "error";
+
 export type StatusPayload = {
   cwd: string;
   cached?: boolean;

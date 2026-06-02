@@ -1,7 +1,7 @@
-import { abortActiveRequest, loadRuns, postJson, refresh, sendRunInput, showRunDetails, showSnapshot, stopRun, validateCwd } from "./api.js";
+import { abortActiveRequest, loadRuns, openWorkingFolder, postJson, refresh, scheduleCwdChildren, sendRunInput, showRunDetails, showSnapshot, stopRun, validateCwd } from "./api.js";
 import { els } from "./dom.js";
 import { applyTemplate, recallPrompt } from "./history.js";
-import { appendBlock, clearOutput, filterOutput, scrollOutputToBottom, updateOutputJump } from "./output.js";
+import { appendBlock, clearOutput, filterOutput, scrollOutputToTop, updateOutputJump } from "./output.js";
 import { promptTemplates, state } from "./state.js";
 import { agentName } from "./text.js";
 import { autoGrowPrompt, moveFocusWithin, selectAgent, updateAgentUi } from "./ui.js";
@@ -33,8 +33,10 @@ export function bindEvents() {
     state.cwdTouched = true;
     els.cwd.classList.remove("invalid");
     els.cwdStatus.textContent = "";
+    scheduleCwdChildren(els.cwd.value);
   });
   els.cwd.addEventListener("blur", validateCwd);
+  els.openCwdBtn.addEventListener("click", openWorkingFolder);
   els.template.addEventListener("change", applyTemplate);
   els.speed.addEventListener("change", updateAgentUi);
 
@@ -141,10 +143,10 @@ export function bindEvents() {
     }
   });
   els.output.addEventListener("scroll", () => {
-    state.outputPinned = els.output.scrollTop + els.output.clientHeight >= els.output.scrollHeight - 24;
+    state.outputPinned = els.output.scrollTop <= 24;
     updateOutputJump();
   });
-  els.outputJumpBtn.addEventListener("click", scrollOutputToBottom);
+  els.outputJumpBtn.addEventListener("click", scrollOutputToTop);
   els.stopBtn.addEventListener("click", abortActiveRequest);
   els.inlineStopBtn.addEventListener("click", abortActiveRequest);
   els.managePanel.addEventListener("keydown", (event) => {

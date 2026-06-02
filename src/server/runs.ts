@@ -4,10 +4,10 @@ import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { defaultCwd, defaultModel, defaultProvider, host, port, root } from "./config";
 import { statusPayload } from "./agents";
-import type { RunResult, StatusPayload } from "./types";
+import type { CompletedRunStatus, RunResult, StatusPayload } from "./types";
 
 export type RunKind = "chat" | "preset" | "update";
-export type RunStatus = "running" | "waiting_input" | "ok" | "error" | "stopped";
+export type RunStatus = "running" | "waiting_input" | CompletedRunStatus | "stopped";
 
 export type RunRecord = {
   id: string;
@@ -119,9 +119,10 @@ export function finishRun(id: string, result: RunResult) {
   const endedAt = new Date();
   const startedAt = new Date(run.record.startedAt);
   const stopped = run.controller.signal.aborted;
+  const completedStatus = classifyRunResult(result);
   const record: RunRecord = {
     ...run.record,
-    status: stopped ? "stopped" : result.ok ? "ok" : "error",
+    status: stopped ? "stopped" : completedStatus,
     endedAt: endedAt.toISOString(),
     durationMs: Math.max(0, endedAt.getTime() - startedAt.getTime()),
     ok: result.ok,
@@ -136,6 +137,25 @@ export function finishRun(id: string, result: RunResult) {
   void appendLedgerAsync(record).finally(() => {
     broadcastRunEvent("run:done", record);
   });
+}
+
+export function classifyRunResult(result: Pick<RunResult, "ok" | "stdout" | "stderr">): CompletedRunStatus {
+  if (result.ok) return "ok";
+  if (hasUsableStdout(result.stdout) && isPartialCompletionStderr(result.stderr)) {
+    return "partial";
+  }
+  return "error";
+}
+
+function hasUsableStdout(stdout: string) {
+  return stripControl(stdout || "").trim().length > 0;
+}
+
+function isPartialCompletionStderr(stderr: string) {
+  const text = stripControl(stderr || "");
+  return /Agent loop aborted by loop detector/i.test(text)
+    || /Circuit breaker: tool 'shell' called/i.test(text)
+    || /loop detector blocked tool call/i.test(text);
 }
 
 export function stopRun(id: string) {

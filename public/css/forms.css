@@ -38,6 +38,61 @@ textarea.invalid {
   border-color: var(--danger);
 }
 
+.cwd-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
+}
+
+.cwd-open-button {
+  align-self: stretch;
+}
+
+.folder-icon {
+  position: relative;
+  width: 20px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.folder-icon::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: -7px;
+  width: 10px;
+  height: 7px;
+  border: 2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  background: var(--surface);
+}
+
+.icon-button.busy .folder-icon {
+  display: none;
+}
+
+.icon-button.busy::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid oklch(95% 0.012 230 / .25);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+
 .check-row {
   position: relative;
   display: flex;
@@ -54,6 +109,14 @@ textarea.invalid {
 
 .check-row input {
   width: auto;
+}
+
+.send-option {
+  align-self: stretch;
+  min-height: 42px;
+  margin-top: 0;
+  padding: 0 4px;
+  white-space: nowrap;
 }
 
 .tooltip {

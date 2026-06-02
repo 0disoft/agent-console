@@ -41,10 +41,6 @@
     max-height: 30vh;
   }
 
-  .agent {
-    display: none;
-  }
-
   .output-list {
     min-height: 320px;
   }
@@ -56,7 +52,11 @@
     grid-template-columns: 1fr;
   }
 
-  .check-row {
+  .send-option {
+    justify-self: start;
+  }
+
+  .control-stack > .check-row {
     margin-top: 0;
   }
 }
