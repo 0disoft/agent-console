@@ -2,11 +2,13 @@ $ErrorActionPreference = "Stop"
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $repo = "zeroclaw-labs/zeroclaw"
 $assetName = "zeroclaw-x86_64-pc-windows-msvc.zip"
 $installDir = Join-Path $env:USERPROFILE ".zeroclaw\bin"
 $targetExe = Join-Path $installDir "zeroclaw.exe"
+$maxUserPathLength = 8191
 $headers = @{
     "User-Agent" = "agent-console-zeroclaw-updater"
     "Accept" = "application/vnd.github+json"
@@ -58,6 +60,9 @@ function Add-UserPath($path) {
         return $false
     }
     $next = @($parts + $path) -join ";"
+    if ($next.Length -gt $maxUserPathLength) {
+        throw "Refusing to add ZeroClaw to user PATH because it would exceed $maxUserPathLength characters."
+    }
     [Environment]::SetEnvironmentVariable("Path", $next, "User")
     return $true
 }

@@ -19,6 +19,8 @@ export type CompletedRunStatus = "ok" | "partial" | "error";
 export type StatusPayload = {
   cwd: string;
   cached?: boolean;
+  stale?: boolean;
+  error?: string;
   agents: Array<{
     id: string;
     label: string;

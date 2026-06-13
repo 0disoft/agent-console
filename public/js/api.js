@@ -23,6 +23,13 @@ import {
 
 let runsLoadTimer = 0;
 let refreshTimer = 0;
+const eventsReconnectMinDelay = 3000;
+const eventsReconnectMaxDelay = 30000;
+const eventsReconnectJitter = 500;
+const maxStreamTextChars = 1_000_000;
+const streamTextTruncatedMarker = `\n\n[Agent Console 출력이 너무 길어 ${maxStreamTextChars}자까지만 표시합니다.]`;
+const streamParseFailureLimit = 8;
+let streamParseFailureCount = 0;
 
 export function abortActiveRequest() {
   const selectedChat = selectedChatRequest();
@@ -226,6 +233,7 @@ function connectWebSocketEvents() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(`${protocol}//${location.host}/api/ws`);
   state.eventsSocket = socket;
+  socket.addEventListener("open", resetEventsReconnectDelay);
   socket.addEventListener("message", (event) => {
     try {
       const payload = JSON.parse(event.data);
@@ -236,7 +244,7 @@ function connectWebSocketEvents() {
   socket.addEventListener("close", () => {
     if (state.eventsSocket === socket) {
       state.eventsSocket = null;
-      window.setTimeout(connectEvents, 3000);
+      scheduleEventsReconnect();
     }
   });
   socket.addEventListener("error", () => {
@@ -250,7 +258,7 @@ function connectFetchEvents() {
   readEventStream(controller).catch(() => {}).finally(() => {
     if (state.eventsController === controller) {
       state.eventsController = null;
-      window.setTimeout(connectEvents, 3000);
+      scheduleEventsReconnect();
     }
   });
 }
@@ -258,6 +266,7 @@ function connectFetchEvents() {
 async function readEventStream(controller) {
   const res = await fetch("/api/events", { signal: controller.signal });
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  resetEventsReconnectDelay();
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -285,6 +294,17 @@ function handleSseEvent(eventText) {
   }
   handleRunEvent(event, data);
   return data;
+}
+
+function resetEventsReconnectDelay() {
+  state.eventsReconnectDelay = eventsReconnectMinDelay;
+}
+
+function scheduleEventsReconnect() {
+  const delay = Math.min(Number(state.eventsReconnectDelay) || eventsReconnectMinDelay, eventsReconnectMaxDelay);
+  state.eventsReconnectDelay = Math.min(delay * 2, eventsReconnectMaxDelay);
+  const jitter = Math.floor(Math.random() * eventsReconnectJitter);
+  window.setTimeout(connectEvents, delay + jitter);
 }
 
 function handleRunEvent(event, data) {
@@ -373,6 +393,7 @@ async function postStreamJson(path, payload, button) {
   setChatRequestRunning(agent, controller, button, requestLabel("/api/chat", payload));
   const block = appendBlock("", "running", "실시간 출력", false);
   const bodyNode = block.querySelector(".output-body");
+  streamParseFailureCount = 0;
   try {
     const res = await fetch(path, {
       method: "POST",
@@ -380,6 +401,9 @@ async function postStreamJson(path, payload, button) {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
+    if (res.status === 409) {
+      throw streamAbortError(await responseErrorMessage(res));
+    }
     if (!res.ok || !res.body) {
       throw new Error(await responseErrorMessage(res));
     }
@@ -405,13 +429,14 @@ async function postStreamJson(path, payload, button) {
     notifyCompletion(resultState.notificationTitle, `${agentName(payload.agent)} 실행이 끝났습니다.`, startedAt);
   } catch (error) {
     const abortedByUser = state.abortedControllers.has(controller);
-    if (!(controller.signal.aborted && abortedByUser)) {
+    const abortedByServer = isStreamAbortError(error);
+    if (!(controller.signal.aborted && abortedByUser) && !abortedByServer) {
       const errorText = controller.signal.aborted ? "요청이 중단되었습니다." : `요청 실패\n${error}`;
       cancelStreamFlush();
       updateOutputBlock(block, errorText, controller.signal.aborted ? "warning" : "error", controller.signal.aborted ? "알림" : "오류");
     } else {
-      const partialText = formatStreamResult({ code: null, ok: false }, command, cwdValue, stdout, `${stderr}${stderr ? "\n" : ""}[사용자에 의해 중단됨]`);
-      const stoppedText = partialText || "[사용자에 의해 중단됨]";
+      const partialText = formatStreamResult({ code: null, ok: false }, command, cwdValue, stdout, `${stderr}${stderr ? "\n" : ""}[요청이 중단됨]`);
+      const stoppedText = partialText || "[요청이 중단됨]";
       cancelStreamFlush();
       updateOutputBlock(block, stoppedText, "warning", "중단됨");
     }
@@ -427,12 +452,12 @@ async function postStreamJson(path, payload, button) {
     } else if (event.type === "heartbeat") {
       return;
     } else if (event.type === "stdout") {
-      stdout += event.text || "";
+      stdout = appendStreamText(stdout, event.text);
     } else if (event.type === "stderr") {
-      stderr += event.text || "";
+      stderr = appendStreamText(stderr, event.text);
     } else if (event.type === "done") {
       finalData = event;
-      if (event.stderr) stderr += event.stderr;
+      stderr = appendStreamText("", mergeFinalStreamText(stderr, event.stderr));
     }
     scheduleStreamFlush();
   }
@@ -443,8 +468,10 @@ async function postStreamJson(path, payload, button) {
       const visibleText = stripAnsi([stdout, stderr ? `\n오류:\n${stderr}` : ""].filter(Boolean).join(""));
       bodyNode.textContent = visibleText;
       block.dataset.outputText = visibleText;
-      block.dataset.searchText = `실시간 출력\n${visibleText}`.toLowerCase();
-      applyOutputFilter();
+      if (state.outputFilter) {
+        block.dataset.searchText = `실시간 출력\n${visibleText}`.toLowerCase();
+        applyOutputFilter();
+      }
       if (state.outputPinned) els.output.scrollTop = 0;
       streamFlushId = 0;
     });
@@ -474,12 +501,49 @@ function scheduleRefresh() {
 }
 
 function parseStreamLine(line, onEvent) {
-  if (!line.trim()) return;
+  const value = String(line || "").trim();
+  if (!value) return;
   try {
-    onEvent(JSON.parse(line));
+    onEvent(JSON.parse(value));
+    streamParseFailureCount = 0;
   } catch (error) {
-    console.warn("Skipping malformed stream line", error);
+    streamParseFailureCount += 1;
+    const snippet = value.slice(0, 160);
+    if (streamParseFailureCount <= streamParseFailureLimit) {
+      console.warn(`Malformed stream event #${streamParseFailureCount}: ${snippet}`, error);
+    }
+    if (streamParseFailureCount >= streamParseFailureLimit) {
+      throw new Error(`Malformed stream payload repeated (${streamParseFailureCount}번).`);
+    }
   }
+}
+
+function mergeFinalStreamText(current, finalText) {
+  const finalValue = String(finalText || "");
+  if (!finalValue) return current;
+  if (!current) return finalValue;
+  if (finalValue === current || finalValue.startsWith(current)) return finalValue;
+  if (current.includes(finalValue)) return current;
+  return `${current}${current.endsWith("\n") ? "" : "\n"}${finalValue}`;
+}
+
+function appendStreamText(current, chunk) {
+  const value = String(chunk || "");
+  if (!value || current.includes(streamTextTruncatedMarker)) return current;
+  const remaining = maxStreamTextChars - current.length;
+  if (remaining <= 0) return `${current}${streamTextTruncatedMarker}`;
+  if (value.length <= remaining) return `${current}${value}`;
+  return `${current}${value.slice(0, remaining)}${streamTextTruncatedMarker}`;
+}
+
+function streamAbortError(message) {
+  const error = new Error(message || "요청이 중단되었습니다.");
+  error.name = "StreamAbortError";
+  return error;
+}
+
+function isStreamAbortError(error) {
+  return error?.name === "StreamAbortError";
 }
 
 export async function validateCwd() {
@@ -492,6 +556,7 @@ export async function validateCwd() {
   state.cwdValidateController?.abort();
   const controller = new AbortController();
   state.cwdValidateController = controller;
+  state.cwdValidateValue = value;
   const validationPromise = (async () => {
     const res = await fetch("/api/validate-cwd", {
       method: "POST",
@@ -522,6 +587,7 @@ export async function validateCwd() {
     }
     if (state.cwdValidatePromise === validationPromise) {
       state.cwdValidatePromise = null;
+      state.cwdValidateValue = "";
     }
   }
 }
@@ -599,8 +665,9 @@ function formatRunDetail(run) {
 
 async function ensureValidCwdBeforeSend() {
   if (state.cwdValidatePromise) {
+    const validatingValue = state.cwdValidateValue;
     const pending = await state.cwdValidatePromise;
-    if (pending) return pending;
+    if (pending && validatingValue && els.cwd.value.trim() === validatingValue) return pending;
   }
   return await validateCwd();
 }

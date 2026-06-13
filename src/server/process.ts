@@ -1,15 +1,17 @@
 import { defaultCwd, resolveCwd, timeoutDefault } from "./config";
 import type { RunOptions, RunResult } from "./types";
 
+const ANSI_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
+const MAX_CAPTURED_OUTPUT_CHARS = 1_000_000;
+const OUTPUT_TRUNCATED_MARKER = `\n\n[Agent Console truncated captured output after ${MAX_CAPTURED_OUTPUT_CHARS} characters.]`;
+
 export function printableCommand(args: string[]) {
-  return args.map((arg) => {
-    const text = String(arg);
-    return /[\s"]/.test(text) ? `"${text.replaceAll('"', '\\"')}"` : text;
-  }).join(" ");
+  return args.map((arg) => JSON.stringify(String(arg))).join(" ");
 }
 
 export async function runCommand(args: string[], options: RunOptions = {}): Promise<RunResult> {
   const timeoutSeconds = Number(options.timeout || timeoutDefault);
+  const command = printableCommand(args);
   let cwd = defaultCwd;
   let timedOut = false;
   let child: ReturnType<typeof Bun.spawn> | null = null;
@@ -17,6 +19,11 @@ export async function runCommand(args: string[], options: RunOptions = {}): Prom
 
   try {
     cwd = resolveCwd(options.cwd);
+    if (options.signal?.aborted) {
+      const result = buildAbortResult(command, cwd);
+      options.onDone?.(result);
+      return result;
+    }
     child = Bun.spawn(args, {
       cwd,
       env: {
@@ -28,8 +35,6 @@ export async function runCommand(args: string[], options: RunOptions = {}): Prom
       stderr: "pipe",
     });
     if (options.interactiveInput) registerInputWriter(child, options);
-    options.onStart?.({ command: printableCommand(args), cwd });
-
     const timer = setTimeout(() => {
       timedOut = true;
       killProcess(child);
@@ -42,6 +47,7 @@ export async function runCommand(args: string[], options: RunOptions = {}): Prom
     options.signal?.addEventListener("abort", abortHandler, { once: true });
 
     try {
+      options.onStart?.({ command, cwd });
       const [stdout, stderr, code] = await Promise.all([
         readStreamText(child.stdout),
         readStreamText(child.stderr),
@@ -63,7 +69,7 @@ export async function runCommand(args: string[], options: RunOptions = {}): Prom
           : aborted
             ? stripAnsi(`${stderr}\nRequest aborted.`.trim())
             : stripAnsi(stderr),
-        command: printableCommand(args),
+        command,
         cwd,
       };
       options.onDone?.(result);
@@ -79,7 +85,7 @@ export async function runCommand(args: string[], options: RunOptions = {}): Prom
       code: null,
       stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
-      command: printableCommand(args),
+      command,
       cwd,
     };
     options.onDone?.(result);
@@ -92,9 +98,31 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
   const command = printableCommand(args);
   const encoder = new TextEncoder();
   let cwd = defaultCwd;
+  let timedOut = false;
+  let aborted = false;
+  let child: ReturnType<typeof Bun.spawn> | null = null;
+  let exited = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+  const abortHandler = () => {
+    aborted = true;
+    if (child) killProcess(child);
+  };
 
   try {
     cwd = resolveCwd(options.cwd);
+    if (options.signal?.aborted) {
+      const result = buildAbortResult(command, cwd, "Request was aborted before starting.");
+      options.onDone?.(result);
+      return jsonResponse({
+        ok: result.ok,
+        code: result.code,
+        command,
+        cwd,
+        stderr: result.stderr,
+      }, 409);
+    }
   } catch (error) {
     const result = {
       ok: false,
@@ -122,13 +150,6 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
 
   const stream = new ReadableStream({
     async start(controller) {
-      let timedOut = false;
-      let aborted = false;
-      let child: ReturnType<typeof Bun.spawn> | null = null;
-      let exited = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      let heartbeat: ReturnType<typeof setInterval> | null = null;
-      let closed = false;
       const send = (event: Record<string, unknown>) => {
         if (closed) return false;
         try {
@@ -140,12 +161,21 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
           return false;
         }
       };
-      const abortHandler = () => {
-        aborted = true;
-        if (child) killProcess(child);
-      };
 
       try {
+        if (options.signal?.aborted) {
+          const result = buildAbortResult(command, cwd, "Request was aborted before starting.");
+          send({
+            type: "done",
+            ok: result.ok,
+            code: result.code,
+            command,
+            cwd,
+            stderr: result.stderr,
+          });
+          options.onDone?.(result);
+          return;
+        }
         child = Bun.spawn(args, {
           cwd,
           env: {
@@ -239,6 +269,11 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
         }
       }
     },
+    cancel() {
+      closed = true;
+      aborted = true;
+      if (child) killProcess(child);
+    },
   });
 
   return new Response(stream, {
@@ -246,6 +281,27 @@ export function streamCommandResponse(args: string[], options: RunOptions = {}) 
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+function buildAbortResult(command: string, cwd: string, message = "Request was aborted.") {
+  return {
+    ok: false,
+    code: null,
+    stdout: "",
+    stderr: message,
+    command,
+    cwd,
+  };
+}
+
+function jsonResponse(data: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
     },
   });
 }
@@ -260,24 +316,28 @@ async function pipeProcessStream(
   const reader = stream.getReader();
   const decoder = outputDecoder();
   let output = "";
+  let truncated = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const text = decoder.decode(value, { stream: true });
       if (text) {
-        output += text;
+        ({ text: output, truncated } = appendCapturedOutput(output, truncated, text));
         onOutput?.({ stream: type, text });
         send({ type, text });
       }
     }
     const tail = decoder.decode();
     if (tail) {
-      output += tail;
+      ({ text: output, truncated } = appendCapturedOutput(output, truncated, tail));
       onOutput?.({ stream: type, text: tail });
       send({ type, text: tail });
     }
     return stripAnsi(output);
+  } catch {
+    const tail = decoder.decode();
+    return stripAnsi(`${output}${tail}`);
   } finally {
     reader.releaseLock();
   }
@@ -313,20 +373,45 @@ function registerInputWriter(child: ReturnType<typeof Bun.spawn>, options: RunOp
 }
 
 function killProcess(child: { kill: () => void; pid?: number }) {
-  if (process.platform === "win32" && child.pid) {
-    try {
-      Bun.spawnSync(["taskkill.exe", "/PID", String(child.pid), "/T", "/F"], {
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-    } catch (error) {
-      console.warn(`taskkill failed; falling back to child.kill(): ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
   try {
     child.kill();
   } catch {
   }
+  if (process.platform === "win32" && child.pid) {
+    let forceTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const killer = spawnTaskkill(child.pid, false);
+      forceTimer = setTimeout(() => {
+        try {
+          spawnTaskkill(child.pid!, true);
+        } catch (error) {
+          console.warn(`forced taskkill launch failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 1500);
+      if (typeof forceTimer === "object" && "unref" in forceTimer && typeof forceTimer.unref === "function") {
+        forceTimer.unref();
+      }
+      void killer.exited.then((code) => {
+        if (forceTimer) clearTimeout(forceTimer);
+        if (code !== 0) spawnTaskkill(child.pid!, true);
+      }).catch((error) => {
+        if (forceTimer) clearTimeout(forceTimer);
+        console.warn(`taskkill failed; forcing process tree: ${error instanceof Error ? error.message : String(error)}`);
+        spawnTaskkill(child.pid!, true);
+      });
+      return;
+    } catch (error) {
+      if (forceTimer) clearTimeout(forceTimer);
+      console.warn(`taskkill launch failed after child.kill(): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+function spawnTaskkill(pid: number, force: boolean) {
+  return Bun.spawn(["taskkill.exe", "/PID", String(pid), "/T", ...(force ? ["/F"] : [])], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
 }
 
 async function readStreamText(stream: ReadableStream<Uint8Array> | null) {
@@ -334,17 +419,26 @@ async function readStreamText(stream: ReadableStream<Uint8Array> | null) {
   const reader = stream.getReader();
   const decoder = outputDecoder();
   let text = "";
+  let truncated = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      text += decoder.decode(value, { stream: true });
+      ({ text, truncated } = appendCapturedOutput(text, truncated, decoder.decode(value, { stream: true })));
     }
-    text += decoder.decode();
+    ({ text } = appendCapturedOutput(text, truncated, decoder.decode()));
     return text;
   } finally {
     reader.releaseLock();
   }
+}
+
+function appendCapturedOutput(current: string, truncated: boolean, chunk: string) {
+  if (!chunk || truncated) return { text: current, truncated };
+  const remaining = MAX_CAPTURED_OUTPUT_CHARS - current.length;
+  if (remaining <= 0) return { text: `${current}${OUTPUT_TRUNCATED_MARKER}`, truncated: true };
+  if (chunk.length <= remaining) return { text: `${current}${chunk}`, truncated: false };
+  return { text: `${current}${chunk.slice(0, remaining)}${OUTPUT_TRUNCATED_MARKER}`, truncated: true };
 }
 
 function outputDecoder() {
@@ -381,5 +475,5 @@ export function firstNonEmpty(text: string) {
 }
 
 export function stripAnsi(text: string) {
-  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+  return text.replace(ANSI_PATTERN, "");
 }

@@ -1,8 +1,8 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rename, rm, stat as statAsync, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
-import { defaultCwd, defaultModel, defaultProvider, host, port, root } from "./config";
+import { configuredModel, configuredProvider, defaultCwd, host, port, root } from "./config";
 import { statusPayload } from "./agents";
 import type { CompletedRunStatus, RunResult, StatusPayload } from "./types";
 
@@ -43,12 +43,22 @@ const ledgerPath = join(stateDir, "runs.jsonl");
 export const DEFAULT_RUN_HISTORY_LIMIT = 30;
 export const MAX_RUN_HISTORY_LIMIT = 100;
 const RUN_LOOKUP_LIMIT = 200;
+const COMPLETED_RUN_CACHE_LIMIT = 100;
 const LEDGER_TAIL_CHUNK_BYTES = 64 * 1024;
 const LEDGER_TAIL_MAX_BYTES = 1024 * 1024;
+const LEDGER_COMPACT_TRIGGER_BYTES = 2 * LEDGER_TAIL_MAX_BYTES;
+const LEDGER_COMPACT_TARGET_LINES = RUN_LOOKUP_LIMIT;
+const LEDGER_COMPACT_CHECK_INTERVAL_MS = 60_000;
+const SSE_HEARTBEAT_MS = 15_000;
+export const MAX_RUN_INPUT_CHARS = 100_000;
+const ANSI_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
 const activeRuns = new Map<string, ActiveRun>();
+const completedRuns: RunRecord[] = [];
 const eventEncoder = new TextEncoder();
 const eventClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const wsClients = new Set<ServerWebSocket<unknown>>();
+let ledgerWriteQueue: Promise<void> = Promise.resolve();
+let lastLedgerCompactCheck = 0;
 
 export function beginRun(input: {
   kind: RunKind;
@@ -99,7 +109,7 @@ export function attachRunInput(id: string) {
 export function attachRunOutput(id: string) {
   return (event: { stream: "stdout" | "stderr"; text: string }) => {
     const run = activeRuns.get(id);
-    if (!run || run.record.status !== "running") return;
+    if (!run || run.record.status !== "running" || !run.input) return;
     if (!looksLikeInputPrompt(event.text)) return;
     run.record.status = "waiting_input";
     run.record.inputReady = Boolean(run.input);
@@ -134,6 +144,7 @@ export function finishRun(id: string, result: RunResult) {
     error: result.ok ? "" : result.stderr || "",
   };
   activeRuns.delete(id);
+  rememberCompletedRun(record);
   void appendLedgerAsync(record).finally(() => {
     broadcastRunEvent("run:done", record);
   });
@@ -166,10 +177,13 @@ export function stopRun(id: string) {
   return true;
 }
 
-export async function sendRunInput(id: string, text: string) {
+export async function sendRunInput(id: string, text: string, options: { newline?: boolean } = {}) {
   const run = activeRuns.get(id);
   if (!run?.input) return false;
-  const ok = await run.input(text);
+  const input = normalizeRunInput(text, options);
+  if (input.length > MAX_RUN_INPUT_CHARS) return false;
+  const ok = await run.input(input);
+  if (activeRuns.get(id) !== run) return false;
   if (!ok) return false;
   run.record.status = "running";
   run.record.inputReady = true;
@@ -177,9 +191,15 @@ export async function sendRunInput(id: string, text: string) {
   run.record.lastInputAt = new Date().toISOString();
   broadcastRunEvent("run:input", {
     ...run.record,
-    inputChars: text.length,
+    inputChars: input.length,
   });
   return true;
+}
+
+export function normalizeRunInput(text: string, options: { newline?: boolean } = {}) {
+  const input = String(text || "");
+  if (options.newline === false || input.endsWith("\n")) return input;
+  return `${input}\n`;
 }
 
 export function listActiveRuns() {
@@ -194,12 +214,16 @@ export function normalizeRunHistoryLimit(value: unknown, fallback = DEFAULT_RUN_
 
 export function listRecentRuns(limit: unknown = DEFAULT_RUN_HISTORY_LIMIT) {
   const normalizedLimit = normalizeRunHistoryLimit(limit);
-  return [...readLedger(normalizedLimit), ...listActiveRuns()].slice(-normalizedLimit).reverse();
+  return sortedUniqueRuns([...readLedger(normalizedLimit), ...completedRuns, ...listActiveRuns()])
+    .slice(-normalizedLimit)
+    .reverse();
 }
 
 export function getRun(id: string) {
   const active = activeRuns.get(id);
   if (active) return { ...active.record };
+  const completed = findCompletedRun(id);
+  if (completed) return { ...completed };
   return readLedger(RUN_LOOKUP_LIMIT).reverse().find((record) => record.id === id) || null;
 }
 
@@ -210,8 +234,8 @@ export async function snapshotPayload() {
     server: {
       host,
       port,
-      model: defaultModel,
-      provider: defaultProvider,
+      model: configuredModel || null,
+      provider: configuredProvider || null,
       defaultCwd,
     },
     status,
@@ -238,7 +262,7 @@ export function eventsResponse() {
           return;
         }
         sendSse(controller, "ping", { at: new Date().toISOString() });
-      }, 1000);
+      }, SSE_HEARTBEAT_MS);
     },
     cancel() {
       if (client) eventClients.delete(client);
@@ -271,7 +295,7 @@ export function unregisterWebSocket(ws: ServerWebSocket<unknown>) {
 }
 
 export async function handleWebSocketMessage(ws: ServerWebSocket<unknown>, message: string | Buffer) {
-  let payload: { type?: string; runId?: string; text?: string } = {};
+  let payload: { type?: string; runId?: string; text?: string; newline?: boolean } = {};
   try {
     payload = JSON.parse(String(message));
   } catch {
@@ -284,7 +308,7 @@ export async function handleWebSocketMessage(ws: ServerWebSocket<unknown>, messa
   }
   if (payload.type === "input" && payload.runId) {
     const text = payload.text || "";
-    sendWs(ws, "run:input-response", { runId: payload.runId, ok: await sendRunInput(payload.runId, text) });
+    sendWs(ws, "run:input-response", { runId: payload.runId, ok: await sendRunInput(payload.runId, text, { newline: payload.newline }) });
     return;
   }
   if (payload.type === "snapshot") {
@@ -306,11 +330,38 @@ function snapshotIssues(status: StatusPayload) {
 }
 
 async function appendLedgerAsync(record: RunRecord) {
-  try {
-    await mkdir(stateDir, { recursive: true });
-    await appendFile(ledgerPath, `${JSON.stringify(record)}\n`, "utf8");
-  } catch (error) {
+  const task = ledgerWriteQueue.then(
+    () => appendLedgerRecordAsync(record),
+    () => appendLedgerRecordAsync(record),
+  );
+  ledgerWriteQueue = task.catch(() => {});
+  return task.catch((error) => {
     console.warn(`Run ledger append failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
+async function appendLedgerRecordAsync(record: RunRecord) {
+  await mkdir(stateDir, { recursive: true });
+  await appendFile(ledgerPath, `${JSON.stringify(record)}\n`, "utf8");
+  await compactLedgerIfNeeded();
+}
+
+async function compactLedgerIfNeeded(now = Date.now()) {
+  if (now - lastLedgerCompactCheck < LEDGER_COMPACT_CHECK_INTERVAL_MS) return;
+  lastLedgerCompactCheck = now;
+  const ledgerStat = await statAsync(ledgerPath).catch(() => null);
+  if (!ledgerStat || ledgerStat.size <= LEDGER_COMPACT_TRIGGER_BYTES) return;
+
+  const lines = readRecentLedgerLines(LEDGER_COMPACT_TARGET_LINES);
+  if (!lines.length) return;
+
+  const compactPath = `${ledgerPath}.compact-${process.pid}-${Date.now()}`;
+  try {
+    await writeFile(compactPath, `${lines.join("\n")}\n`, "utf8");
+    await rename(compactPath, ledgerPath);
+  } catch (error) {
+    await rm(compactPath, { force: true }).catch(() => {});
+    console.warn(`Run ledger compaction failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -320,7 +371,7 @@ function broadcastRunEvent(event: string, data: unknown) {
 }
 
 function broadcastEvent(event: string, data: unknown) {
-  for (const client of Array.from(eventClients)) {
+  for (const client of eventClients) {
     sendSse(client, event, data);
   }
 }
@@ -334,7 +385,7 @@ function sendSse(client: ReadableStreamDefaultController<Uint8Array>, event: str
 }
 
 function broadcastWs(event: string, data: unknown) {
-  for (const ws of Array.from(wsClients)) {
+  for (const ws of wsClients) {
     sendWs(ws, event, data);
   }
 }
@@ -367,8 +418,8 @@ function readLedger(limit: number) {
   }
 }
 
-function readRecentLedgerLines(limit: number) {
-  const normalizedLimit = normalizeRunHistoryLimit(limit, DEFAULT_RUN_HISTORY_LIMIT, RUN_LOOKUP_LIMIT);
+function readRecentLedgerLines(limit: number, maxLimit = RUN_LOOKUP_LIMIT) {
+  const normalizedLimit = normalizeRunHistoryLimit(limit, DEFAULT_RUN_HISTORY_LIMIT, maxLimit);
   let fd = -1;
   try {
     const stat = statSync(ledgerPath);
@@ -377,8 +428,17 @@ function readRecentLedgerLines(limit: number) {
     let position = stat.size;
     let bytesReadTotal = 0;
     let newlineCount = 0;
+    let startsAtLineBoundary = true;
 
-    while (position > 0 && bytesReadTotal < LEDGER_TAIL_MAX_BYTES && newlineCount <= normalizedLimit) {
+    if (position > 0) {
+      const probe = Buffer.allocUnsafe(1);
+      const probeBytes = readSync(fd, probe, 0, 1, position - 1);
+      if (probeBytes > 0) {
+        startsAtLineBoundary = probe[0] === 10 || probe[0] === 13;
+      }
+    }
+
+    while (position > 0 && bytesReadTotal < LEDGER_TAIL_MAX_BYTES && newlineCount < normalizedLimit + 1) {
       const bytesToRead = Math.min(LEDGER_TAIL_CHUNK_BYTES, position, LEDGER_TAIL_MAX_BYTES - bytesReadTotal);
       const buffer = Buffer.allocUnsafe(bytesToRead);
       position -= bytesToRead;
@@ -391,8 +451,8 @@ function readRecentLedgerLines(limit: number) {
     }
 
     const text = Buffer.concat(chunks.reverse()).toString("utf8");
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    if (position > 0 && lines.length > 0) lines.shift();
+    const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+    if (!startsAtLineBoundary && lines.length > 0) lines.shift();
     return lines.slice(-normalizedLimit);
   } finally {
     if (fd >= 0) closeSync(fd);
@@ -409,8 +469,35 @@ function parseLedgerLine(line: string) {
   }
 }
 
+function rememberCompletedRun(record: RunRecord) {
+  completedRuns.push({ ...record });
+  if (completedRuns.length > COMPLETED_RUN_CACHE_LIMIT) {
+    completedRuns.splice(0, completedRuns.length - COMPLETED_RUN_CACHE_LIMIT);
+  }
+}
+
+function findCompletedRun(id: string) {
+  for (let index = completedRuns.length - 1; index >= 0; index -= 1) {
+    if (completedRuns[index].id === id) return completedRuns[index];
+  }
+  return null;
+}
+
+function sortedUniqueRuns(records: RunRecord[]) {
+  const byId = new Map<string, RunRecord>();
+  for (const record of records) {
+    if (record?.id) byId.set(record.id, record);
+  }
+  return Array.from(byId.values()).sort((left, right) => runTimestamp(left) - runTimestamp(right));
+}
+
+function runTimestamp(record: RunRecord) {
+  const value = Date.parse(record.endedAt || record.startedAt || "");
+  return Number.isFinite(value) ? value : 0;
+}
+
 function stripControl(text: string) {
-  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+  return text.replace(ANSI_PATTERN, "");
 }
 
 function countNewlines(buffer: Buffer) {

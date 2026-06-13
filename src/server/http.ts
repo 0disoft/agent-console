@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   chatCommand,
   clearStatusCache,
@@ -38,6 +38,8 @@ import {
   upgradeWebSocket,
 } from "./runs";
 
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
 export function startServer() {
   Bun.serve({
     hostname: host,
@@ -56,7 +58,7 @@ export function startServer() {
           || url.pathname.startsWith("/js/")
         )
       ) {
-        return staticFile(join(publicDir, url.pathname.slice(1)), contentType(url.pathname));
+        return staticPublicFile(url.pathname);
       }
       if (request.method === "GET" && url.pathname === "/api/status") {
         return jsonResponse(await statusPayload());
@@ -122,6 +124,38 @@ function staticFile(path: string, type: string) {
   });
 }
 
+function staticPublicFile(pathname: string) {
+  const path = resolveStaticPublicPath(pathname);
+  if (!path) return new Response("Not found", { status: 404 });
+  return staticFile(path, contentType(pathname));
+}
+
+export function resolveStaticPublicPath(pathname: string) {
+  let decoded = "";
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  if (!isPublicAssetPath(decoded)) return null;
+
+  const relativePath = decoded.replace(/^\/+/, "");
+  const candidate = resolve(publicDir, relativePath);
+  return isPathInside(publicDir, candidate) ? candidate : null;
+}
+
+function isPublicAssetPath(pathname: string) {
+  return pathname === "/app.css"
+    || pathname === "/app.js"
+    || pathname.startsWith("/css/")
+    || pathname.startsWith("/js/");
+}
+
+function isPathInside(base: string, candidate: string) {
+  const relation = relative(resolve(base), candidate);
+  return relation === "" || (relation !== ".." && !relation.startsWith(`..${sep}`) && !isAbsolute(relation));
+}
+
 function contentType(pathname: string) {
   if (pathname.endsWith(".css")) return "text/css; charset=utf-8";
   if (pathname.endsWith(".js")) return "text/javascript; charset=utf-8";
@@ -140,8 +174,11 @@ function jsonResponse(data: unknown, status = 200) {
 
 function isAllowedOrigin(request: Request) {
   const origin = request.headers.get("origin");
-  if (!origin) return true;
-  return origin === `http://${host}:${port}` || origin === `http://localhost:${port}`;
+  if (origin) {
+    return origin === `http://${host}:${port}` || origin === `http://localhost:${port}`;
+  }
+  const fetchSite = request.headers.get("sec-fetch-site");
+  return !fetchSite || fetchSite === "same-origin" || fetchSite === "none";
 }
 
 async function handlePost(request: Request, route: string) {
@@ -157,8 +194,7 @@ async function handlePost(request: Request, route: string) {
     if (route.startsWith("/api/runs/") && route.endsWith("/input")) {
       const id = route.split("/").at(-2) || "";
       const text = String(payload.text ?? "");
-      const input = payload.newline === false || text.endsWith("\n") ? text : `${text}\n`;
-      return jsonResponse({ ok: await sendRunInput(id, input), id });
+      return jsonResponse({ ok: await sendRunInput(id, text, { newline: payload.newline }), id });
     }
     if (route === "/api/chat-stream") {
       const { args, timeout } = chatCommand(payload);
@@ -168,7 +204,7 @@ async function handlePost(request: Request, route: string) {
         agent: String(payload.agent || "pi"),
         cwd: String(payload.cwd || defaultCwd),
       });
-      linkAbort(request.signal, run.controller);
+      const unlinkAbort = linkAbort(request.signal, run.controller);
       const response = streamCommandResponse(args, {
         cwd: payload.cwd,
         timeout,
@@ -177,7 +213,10 @@ async function handlePost(request: Request, route: string) {
         onStart: attachRunStart(run.id),
         onInput: attachRunInput(run.id),
         onOutput: attachRunOutput(run.id),
-        onDone: attachRunDone(run.id),
+        onDone: (result) => {
+          attachRunDone(run.id)(result);
+          unlinkAbort();
+        },
       });
       response.headers.set("X-Agent-Console-Run-Id", run.id);
       return response;
@@ -190,17 +229,21 @@ async function handlePost(request: Request, route: string) {
         agent: String(payload.agent || "pi"),
         cwd: String(payload.cwd || defaultCwd),
       });
-      linkAbort(request.signal, run.controller);
-      return jsonResponse(await runCommand(args, {
-        cwd: payload.cwd,
-        timeout,
-        interactiveInput: Boolean(payload.interactiveInput),
-        signal: run.controller.signal,
-        onStart: attachRunStart(run.id),
-        onInput: attachRunInput(run.id),
-        onOutput: attachRunOutput(run.id),
-        onDone: attachRunDone(run.id),
-      }));
+      const unlinkAbort = linkAbort(request.signal, run.controller);
+      try {
+        return jsonResponse(await runCommand(args, {
+          cwd: payload.cwd,
+          timeout,
+          interactiveInput: Boolean(payload.interactiveInput),
+          signal: run.controller.signal,
+          onStart: attachRunStart(run.id),
+          onInput: attachRunInput(run.id),
+          onOutput: attachRunOutput(run.id),
+          onDone: attachRunDone(run.id),
+        }));
+      } finally {
+        unlinkAbort();
+      }
     }
     if (route === "/api/preset") {
       const key = String(payload.key || "");
@@ -211,17 +254,21 @@ async function handlePost(request: Request, route: string) {
         key,
         cwd: String(payload.cwd || defaultCwd),
       });
-      linkAbort(request.signal, run.controller);
-      return jsonResponse(await runCommand(presets[key as keyof typeof presets], {
-        cwd: payload.cwd,
-        timeout: 120,
-        interactiveInput: Boolean(payload.interactiveInput),
-        signal: run.controller.signal,
-        onStart: attachRunStart(run.id),
-        onInput: attachRunInput(run.id),
-        onOutput: attachRunOutput(run.id),
-        onDone: attachRunDone(run.id),
-      }));
+      const unlinkAbort = linkAbort(request.signal, run.controller);
+      try {
+        return jsonResponse(await runCommand(presets[key as keyof typeof presets], {
+          cwd: payload.cwd,
+          timeout: 120,
+          interactiveInput: Boolean(payload.interactiveInput),
+          signal: run.controller.signal,
+          onStart: attachRunStart(run.id),
+          onInput: attachRunInput(run.id),
+          onOutput: attachRunOutput(run.id),
+          onDone: attachRunDone(run.id),
+        }));
+      } finally {
+        unlinkAbort();
+      }
     }
     if (route === "/api/update") {
       const target = String(payload.target || "all");
@@ -233,7 +280,7 @@ async function handlePost(request: Request, route: string) {
         target,
         cwd: String(payload.cwd || defaultCwd),
       });
-      linkAbort(request.signal, run.controller);
+      const unlinkAbort = linkAbort(request.signal, run.controller);
       try {
         const result = target === "all"
           ? await updateAll(String(payload.cwd || defaultCwd), run.controller.signal)
@@ -250,6 +297,8 @@ async function handlePost(request: Request, route: string) {
           cwd: String(payload.cwd || defaultCwd),
         });
         throw error;
+      } finally {
+        unlinkAbort();
       }
     }
     if (route === "/api/validate-cwd") {
@@ -273,7 +322,7 @@ async function handlePost(request: Request, route: string) {
 }
 
 async function readJsonPayload(request: Request) {
-  const text = await request.text();
+  const text = await readRequestText(request, MAX_JSON_BODY_BYTES);
   if (!text.trim()) return {};
   return JSON.parse(text);
 }
@@ -281,7 +330,38 @@ async function readJsonPayload(request: Request) {
 function linkAbort(source: AbortSignal, target: AbortController) {
   if (source.aborted) {
     target.abort();
-    return;
+    return () => {};
   }
-  source.addEventListener("abort", () => target.abort(), { once: true });
+  const abort = () => target.abort();
+  source.addEventListener("abort", abort, { once: true });
+  return () => source.removeEventListener("abort", abort);
+}
+
+async function readRequestText(request: Request, maxBytes: number) {
+  const lengthHeader = request.headers.get("content-length");
+  const contentLength = lengthHeader ? Number(lengthHeader) : 0;
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`요청 본문이 너무 큽니다. 최대 ${maxBytes} bytes까지 허용됩니다.`);
+  }
+  if (!request.body) return "";
+
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new Error(`요청 본문이 너무 큽니다. 최대 ${maxBytes} bytes까지 허용됩니다.`);
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
 }

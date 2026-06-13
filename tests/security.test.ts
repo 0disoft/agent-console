@@ -2,9 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, sep } from "node:path";
-import { chatCommand } from "../src/server/agents";
+import { chatCommand, maxChatTimeout, minChatTimeout, normalizeChatTimeout } from "../src/server/agents";
 import { agentMetadata, listCwdChildDirectories, maxCwdChildDirectories, openCwdFolder, openFolderCommand, piPackageName, updateTargets } from "../src/server/config";
-import { classifyRunResult, MAX_RUN_HISTORY_LIMIT, normalizeRunHistoryLimit } from "../src/server/runs";
+import { resolveStaticPublicPath } from "../src/server/http";
+import { printableCommand, stripAnsi as stripProcessAnsi } from "../src/server/process";
+import { classifyRunResult, MAX_RUN_HISTORY_LIMIT, MAX_RUN_INPUT_CHARS, normalizeRunHistoryLimit, normalizeRunInput } from "../src/server/runs";
+import { renderMarkdown } from "../public/js/markdown.js";
+import { stripAnsi as stripBrowserAnsi } from "../public/js/text.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -28,6 +32,165 @@ describe("security regressions", () => {
     expect(source).not.toContain("readFileSync");
     expect(source).toContain("LEDGER_TAIL_MAX_BYTES");
     expect(source).toContain("readRecentLedgerLines");
+    expect(source).toContain("LEDGER_COMPACT_TRIGGER_BYTES");
+    expect(source).toContain("ledgerWriteQueue");
+    expect(source).toContain("compactLedgerIfNeeded");
+    expect(source).toContain("rename(compactPath, ledgerPath)");
+    expect(source).toContain("const LEDGER_COMPACT_TARGET_LINES = RUN_LOOKUP_LIMIT");
+    expect(source).not.toContain("const LEDGER_COMPACT_TARGET_LINES = 2_000");
+  });
+
+  test("run event broadcasts do not copy client sets on every event", () => {
+    const source = readProjectFile("src/server/runs.ts");
+    const broadcastSource = source.slice(source.indexOf("function broadcastEvent"), source.indexOf("function sendWs"));
+
+    expect(broadcastSource).toContain("for (const client of eventClients)");
+    expect(broadcastSource).toContain("for (const ws of wsClients)");
+    expect(broadcastSource).not.toContain("Array.from(eventClients)");
+    expect(broadcastSource).not.toContain("Array.from(wsClients)");
+  });
+
+  test("process stream failures preserve partial output and Windows kill stays asynchronous", () => {
+    const source = readProjectFile("src/server/process.ts");
+    const pipeSource = source.slice(source.indexOf("async function pipeProcessStream"), source.indexOf("function registerInputWriter"));
+    const killSource = source.slice(source.indexOf("function killProcess"), source.indexOf("async function readStreamText"));
+    const streamSource = source.slice(source.indexOf("export function streamCommandResponse"), source.indexOf("async function pipeProcessStream"));
+    const runSource = source.slice(source.indexOf("export async function runCommand"), source.indexOf("export function streamCommandResponse"));
+
+    expect(pipeSource).toContain("catch");
+    expect(pipeSource).toContain("return stripAnsi(`${output}${tail}`)");
+    expect(runSource.indexOf("const timer = setTimeout")).toBeLessThan(runSource.indexOf("options.onStart?.({ command, cwd })"));
+    expect(runSource.indexOf("options.onStart?.({ command, cwd })")).toBeLessThan(runSource.indexOf("await Promise.all"));
+    expect(streamSource).toContain("cancel()");
+    expect(streamSource).toContain("if (child) killProcess(child)");
+    expect(source).toContain("MAX_CAPTURED_OUTPUT_CHARS");
+    expect(source).toContain("appendCapturedOutput");
+    expect(killSource).toContain("spawnTaskkill(child.pid, false)");
+    expect(killSource).toContain("spawnTaskkill(child.pid!, true)");
+    expect(killSource).not.toContain('"/T", "/F"]');
+    expect(killSource).not.toContain("Bun.spawnSync");
+  });
+
+  test("displayed commands are JSON-quoted instead of shell-like snippets", () => {
+    expect(printableCommand(["cmd", "hello world", "a;b", "$HOME"])).toBe('"cmd" "hello world" "a;b" "$HOME"');
+  });
+
+  test("run stdin input newline handling is centralized and consistent", () => {
+    const serverSource = readProjectFile("src/server/http.ts");
+    const runsSource = readProjectFile("src/server/runs.ts");
+
+    expect(normalizeRunInput("y")).toBe("y\n");
+    expect(normalizeRunInput("y\n")).toBe("y\n");
+    expect(normalizeRunInput("y", { newline: false })).toBe("y");
+    expect(serverSource).toContain("sendRunInput(id, text, { newline: payload.newline })");
+    expect(runsSource).toContain("sendRunInput(payload.runId, text, { newline: payload.newline })");
+    expect(runsSource).toContain("activeRuns.get(id) !== run");
+    expect(MAX_RUN_INPUT_CHARS).toBe(100_000);
+    expect(runsSource).toContain("input.length > MAX_RUN_INPUT_CHARS");
+  });
+
+  test("run prompt detection only marks waiting when stdin is attached", () => {
+    const runsSource = readProjectFile("src/server/runs.ts");
+    const outputHandler = runsSource.slice(runsSource.indexOf("export function attachRunOutput"), runsSource.indexOf("export function attachRunDone"));
+
+    expect(outputHandler).toContain("!run.input");
+    expect(outputHandler).toContain("run:waiting-input");
+  });
+
+  test("cwd validation tracks the input value so stale promise results are ignored before send", () => {
+    const stateSource = readProjectFile("public/js/state.js");
+    const apiSource = readProjectFile("public/js/api.js");
+
+    expect(stateSource).toContain("cwdValidateValue");
+    expect(apiSource).toContain("state.cwdValidateValue = value");
+    expect(apiSource).toContain("els.cwd.value.trim() === validatingValue");
+  });
+
+  test("static public file resolution stays inside the public directory", () => {
+    const appCss = resolveStaticPublicPath("/app.css") || "";
+    const appJs = resolveStaticPublicPath("/app.js") || "";
+    const nestedJs = resolveStaticPublicPath("/js/app-init.js") || "";
+
+    expect(appCss.endsWith(join("public", "app.css"))).toBe(true);
+    expect(appJs.endsWith(join("public", "app.js"))).toBe(true);
+    expect(nestedJs.endsWith(join("public", "js", "app-init.js"))).toBe(true);
+    expect(resolveStaticPublicPath("/js/../../src/server/config.ts")).toBeNull();
+    expect(resolveStaticPublicPath("/js/%2e%2e/%2e%2e/src/server/config.ts")).toBeNull();
+    expect(resolveStaticPublicPath("/%2e%2e/package.json")).toBeNull();
+  });
+
+  test("POST JSON bodies are size-limited and abort listeners are removed", () => {
+    const source = readProjectFile("src/server/http.ts");
+
+    expect(source).toContain("MAX_JSON_BODY_BYTES");
+    expect(source).toContain("readRequestText(request, MAX_JSON_BODY_BYTES)");
+    expect(source).toContain("totalBytes > maxBytes");
+    expect(source).toContain("source.removeEventListener");
+    expect(source).toContain("unlinkAbort()");
+  });
+
+  test("snapshots report only configured model and provider values", () => {
+    const source = readProjectFile("src/server/runs.ts");
+    const snapshotSource = source.slice(source.indexOf("export async function snapshotPayload"), source.indexOf("export function eventsResponse"));
+
+    expect(snapshotSource).toContain("model: configuredModel || null");
+    expect(snapshotSource).toContain("provider: configuredProvider || null");
+    expect(snapshotSource).not.toContain("defaultModel");
+    expect(snapshotSource).not.toContain("defaultProvider");
+  });
+
+  test("markdown inline code renders escaped HTML instead of live tags", () => {
+    const html = renderMarkdown("`<img src=x onerror=alert(1)>`");
+    const source = readProjectFile("public/js/markdown.js");
+
+    expect(html).toContain("<code>&lt;img src=x onerror=alert(1)&gt;</code>");
+    expect(html).not.toContain("<img");
+    expect(source).toContain('data-lang="${escapeHtml(lang)}"');
+  });
+
+  test("browser streaming output is capped before full-text rendering", () => {
+    const source = readProjectFile("public/js/api.js");
+    const streamSource = source.slice(source.indexOf("async function postStreamJson"), source.indexOf("function scheduleLoadRuns"));
+
+    expect(source).toContain("maxStreamTextChars");
+    expect(source).toContain("appendStreamText");
+    expect(streamSource).toContain("stdout = appendStreamText(stdout, event.text)");
+    expect(streamSource).toContain("stderr = appendStreamText(stderr, event.text)");
+    expect(streamSource).toContain("if (state.outputFilter)");
+  });
+
+  test("chat timeout is clamped by the server command builder", () => {
+    expect(normalizeChatTimeout(1)).toBe(minChatTimeout);
+    expect(normalizeChatTimeout(999999)).toBe(maxChatTimeout);
+    expect(normalizeChatTimeout("not-a-number")).toBe(600);
+    expect(chatCommand({ agent: "pi", prompt: "안녕", timeout: 999999 }).timeout).toBe(maxChatTimeout);
+  });
+
+  test("status cache prunes expired entries and marks stale fallback payloads", () => {
+    const source = readProjectFile("src/server/agents.ts");
+    const typeSource = readProjectFile("src/server/types.ts");
+
+    expect(source).toContain("pruneStatusCaches(now)");
+    expect(source).toContain("staleStatusPayload");
+    expect(source).toContain("stale: true");
+    expect(typeSource).toContain("stale?: boolean");
+    expect(typeSource).toContain("error?: string");
+  });
+
+  test("tool PATH lookup normalizes quoted entries and caches by PATH state", () => {
+    const source = readProjectFile("src/server/agents.ts");
+
+    expect(source).toContain("pathLookupCache");
+    expect(source).toContain("normalizePathEntry");
+    expect(source).toContain("process.env.PATHEXT");
+    expect(source).toContain("pathLookupCache.clear()");
+  });
+
+  test("ANSI stripping removes OSC control sequences as well as CSI sequences", () => {
+    expect(stripProcessAnsi("a\x1b[31mred\x1b[0m")).toBe("ared");
+    expect(stripProcessAnsi("a\x1b]0;title\x07b")).toBe("ab");
+    expect(stripProcessAnsi("a\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\b")).toBe("alinkb");
+    expect(stripBrowserAnsi("a\x1b]0;title\x07b")).toBe("ab");
   });
 
   test("ZeroClaw update path uses a verified GitHub release updater", () => {
@@ -44,6 +207,9 @@ describe("security regressions", () => {
     expect(updater).toContain("Get-FileHash -Algorithm SHA256");
     expect(updater).toContain("System.Security.Cryptography.SHA256");
     expect(updater).toContain("System.IO.Compression.ZipFile");
+    expect(updater).toContain("[Net.SecurityProtocolType]::Tls12");
+    expect(updater).toContain("$maxUserPathLength = 8191");
+    expect(updater).toContain("Refusing to add ZeroClaw to user PATH");
     expect([...updater].every((char) => char.charCodeAt(0) < 128)).toBe(true);
     expect(source).not.toContain("releases/latest/download");
     expect(source).not.toContain("Invoke-WebRequest");
@@ -60,6 +226,16 @@ describe("security regressions", () => {
     expect(source).toContain("piPackageName");
   });
 
+  test("Hermes gateway is restarted only when it was running before update", () => {
+    const source = readProjectFile("src/server/agents.ts");
+    const updateSource = source.slice(source.indexOf("async function updateHermes"), source.indexOf("async function updatePi"));
+
+    expect(source).toContain("async function isHermesGatewayRunning");
+    expect(updateSource).toContain("gatewayWasRunning");
+    expect(updateSource).toContain("gatewayWasRunning ? await stopHermesGateway() : null");
+    expect(updateSource).toContain("if (gatewayWasRunning)");
+  });
+
   test("Windows stop helper delegates to a script instead of interpolating the batch path into PowerShell source", () => {
     const stopCmd = readProjectFile("stop.cmd");
     const stopPs1 = readProjectFile("stop.ps1");
@@ -68,6 +244,15 @@ describe("security regressions", () => {
     expect(stopCmd).not.toContain("-Command");
     expect(stopCmd).not.toContain("Resolve-Path '%~dp0'");
     expect(stopPs1).toContain("$PSScriptRoot");
+  });
+
+  test("launcher waits for an HTTP response before opening the browser", () => {
+    const source = readProjectFile("launch.ps1");
+
+    expect(source).toContain("Invoke-WebRequest");
+    expect(source).toContain("AddSeconds(20)");
+    expect(source).toContain("Start-Sleep -Milliseconds 250");
+    expect(source).not.toContain("Start-Sleep -Seconds 2; Start-Process");
   });
 
   test("Hermes admin helper refuses elevated or broadly writable user-profile script actions", () => {
@@ -111,11 +296,31 @@ describe("security regressions", () => {
   test("chat streaming keeps idle requests alive without rendering heartbeat events", () => {
     const serverStream = readProjectFile("src/server/process.ts");
     const browserStream = readProjectFile("public/js/api.js");
+    const runEvents = readProjectFile("src/server/runs.ts");
+    const browserState = readProjectFile("public/js/state.js");
 
     expect(serverStream).toContain('type: "heartbeat"');
     expect(serverStream).toContain("setInterval");
     expect(browserStream).toContain('event.type === "heartbeat"');
     expect(browserStream).toContain("return;");
+    expect(runEvents).toContain("SSE_HEARTBEAT_MS");
+    expect(runEvents).not.toContain("}, 1000)");
+    expect(browserStream).toContain("scheduleEventsReconnect");
+    expect(browserStream).toContain("eventsReconnectMaxDelay");
+    expect(browserState).toContain("eventsReconnectDelay");
+  });
+
+  test("stream parsing tolerates whitespace and pre-abort responses render as stopped", () => {
+    const source = readProjectFile("public/js/api.js");
+    const parseSource = source.slice(source.indexOf("function parseStreamLine"), source.indexOf("function mergeFinalStreamText"));
+    const streamSource = source.slice(source.indexOf("async function postStreamJson"), source.indexOf("function scheduleLoadRuns"));
+
+    expect(parseSource).toContain("const value = String(line || \"\").trim()");
+    expect(parseSource).toContain("JSON.parse(value)");
+    expect(streamSource).toContain("res.status === 409");
+    expect(streamSource).toContain("streamAbortError");
+    expect(streamSource).toContain("isStreamAbortError(error)");
+    expect(streamSource).toContain('"중단됨"');
   });
 
   test("ZeroClaw loop-detector aborts with useful stdout are shown as partial completion", () => {

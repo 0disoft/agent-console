@@ -24,6 +24,7 @@ export const state = {
   cwdSuggestions: [],
   cwdSuggestionController: null,
   cwdSuggestionTimer: 0,
+  cwdValidateValue: "",
   cwdValidateController: null,
   cwdValidatePromise: null,
   installedTools: {},
@@ -36,6 +37,7 @@ export const state = {
   outputPinned: true,
   eventsSocket: null,
   eventsController: null,
+  eventsReconnectDelay: 3000,
 };
 
 export const maxOutputBlocks = 80;

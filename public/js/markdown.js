@@ -11,7 +11,7 @@ export function renderMarkdown(text) {
   let index = 0;
   const extracted = text.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (match, lang, code) => {
     const token = `${codeTokenPrefix}${blocks.length}@@`;
-    blocks.push(`<pre><code${lang ? ` data-lang="${lang}"` : ""}>${escapeHtml(code)}</code></pre>`);
+    blocks.push(`<pre><code${lang ? ` data-lang="${escapeHtml(lang)}"` : ""}>${escapeHtml(code)}</code></pre>`);
     return token;
   });
   const escaped = escapeHtml(extracted);

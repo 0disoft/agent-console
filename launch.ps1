@@ -21,10 +21,28 @@ if ($listener) {
     exit 0
 }
 
+$openWhenReady = @"
+`$ErrorActionPreference = "SilentlyContinue"
+`$url = "$url"
+`$deadline = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt `$deadline) {
+    try {
+        `$response = Invoke-WebRequest -UseBasicParsing -Uri `$url -TimeoutSec 1
+        if (`$response.StatusCode -ge 200 -and `$response.StatusCode -lt 500) {
+            Start-Process `$url
+            exit 0
+        }
+    } catch {
+    }
+    Start-Sleep -Milliseconds 250
+}
+Start-Process `$url
+"@
+
 Start-Process powershell -WindowStyle Hidden -ArgumentList @(
     "-NoProfile",
     "-Command",
-    "Start-Sleep -Seconds 2; Start-Process '$url'"
+    $openWhenReady
 )
 
 try {

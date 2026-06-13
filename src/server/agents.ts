@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import {
   agentDefinition,
   agentDefinitions,
@@ -23,7 +23,6 @@ import {
   firstLine,
   firstNonEmpty,
   runCommand,
-  shellQuote,
   stripAnsi,
 } from "./process";
 import type { RunResult, StatusPayload, ToolName } from "./types";
@@ -34,12 +33,17 @@ const installedCache = new Map<ToolName, { at: number; command: string; installe
 const statusCacheMs = 15_000;
 const staticStatusCacheMs = 10 * 60_000;
 const commandCache = new Map<string, { at: number; result: RunResult }>();
+const pathLookupCache = new Map<string, string>();
+const WINDOWS_EXECUTABLE_SUFFIXES = getExecutableSuffixes();
+export const minChatTimeout = 30;
+export const maxChatTimeout = 3600;
 
 export function clearStatusCache() {
   cachedStatus = null;
   inflightStatus = null;
   commandCache.clear();
   installedCache.clear();
+  pathLookupCache.clear();
 }
 
 async function stopHermesGateway() {
@@ -55,6 +59,24 @@ async function stopHermesGateway() {
     "-Command",
     "$matches=Get-CimInstance Win32_Process | Where-Object { ($_.Name -in @('python.exe','pythonw.exe','wscript.exe','cmd.exe')) -and ($_.CommandLine -match 'hermes_cli\\.main gateway run|Hermes_Gateway\\.(cmd|vbs)') }; foreach($p in $matches){ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }",
   ], { cwd: defaultCwd, timeout: 30 });
+}
+
+async function isHermesGatewayRunning() {
+  if (process.platform !== "win32") {
+    const result = await runCommand([tools.hermes.command, "gateway", "status"], { cwd: defaultCwd, timeout: 10 });
+    const output = `${result.stdout}\n${result.stderr}`;
+    return result.ok && /running|started|active/i.test(output) && !/not running|stopped|inactive/i.test(output);
+  }
+
+  const result = await runCommand([
+    "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    "$matches=Get-CimInstance Win32_Process | Where-Object { ($_.Name -in @('python.exe','pythonw.exe','wscript.exe','cmd.exe')) -and ($_.CommandLine -match 'hermes_cli\\.main gateway run|Hermes_Gateway\\.(cmd|vbs)') }; if($matches){ exit 0 } else { exit 1 }",
+  ], { cwd: defaultCwd, timeout: 10 });
+  return result.ok;
 }
 
 async function startHermesGateway() {
@@ -78,10 +100,11 @@ export async function updateAgent(target: string, cwd?: string, signal?: AbortSi
 }
 
 async function updateHermes(cwd?: string, signal?: AbortSignal) {
-  const stopResult = await stopHermesGateway();
+  const gatewayWasRunning = await isHermesGatewayRunning().catch(() => false);
+  const stopResult = gatewayWasRunning ? await stopHermesGateway() : null;
   try {
     const first = await runCommand(updateTargets.hermes, { cwd, timeout: 1800, signal });
-    if (!stopResult.ok) {
+    if (stopResult && !stopResult.ok) {
       first.stderr = [
         "Hermes gateway stop attempt failed before update:",
         stopResult.stderr || stopResult.stdout || `(exit ${stopResult.code})`,
@@ -96,9 +119,11 @@ async function updateHermes(cwd?: string, signal?: AbortSignal) {
     const forced = await runCommand([tools.hermes.command, "update", "--yes", "--force"], { cwd, timeout: 1800, signal });
     return mergeRetryResult(first, forced, "Retrying Hermes update with --force.");
   } finally {
-    const startResult = await startHermesGateway();
-    if (startResult && !startResult.ok) {
-      console.warn(`Hermes gateway restart failed: ${startResult.stderr || startResult.stdout}`);
+    if (gatewayWasRunning) {
+      const startResult = await startHermesGateway();
+      if (startResult && !startResult.ok) {
+        console.warn(`Hermes gateway restart failed: ${startResult.stderr || startResult.stdout}`);
+      }
     }
   }
 }
@@ -210,11 +235,7 @@ async function isToolInstalled(target: ToolName) {
   } else if (tool.source !== "path" && commandLooksLikePath(tool.command)) {
     installed = existsSync(resolve(tool.command));
   } else {
-    const check = process.platform === "win32"
-      ? ["where.exe", tool.command]
-      : ["sh", "-c", `command -v ${shellQuote(tool.command)}`];
-    const result = await runCommand(check, { cwd: defaultCwd, timeout: 5 });
-    installed = result.ok;
+    installed = Boolean(findCommandOnPath(tool.command));
   }
 
   installedCache.set(target, { at: Date.now(), command: tool.command, installed });
@@ -223,6 +244,65 @@ async function isToolInstalled(target: ToolName) {
 
 function commandLooksLikePath(command: string) {
   return command.includes("/") || command.includes("\\");
+}
+
+function getExecutableSuffixes() {
+  if (process.platform !== "win32") return [""];
+  const envExts = process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD";
+  return Array.from(new Set(
+    envExts
+      .split(";")
+      .map((extension) => extension.trim().toLowerCase())
+      .filter(Boolean)
+      .map((extension) => extension.startsWith(".") ? extension : `.${extension}`),
+  ));
+}
+
+function hasExecutableSuffix(command: string) {
+  const lower = command.toLowerCase();
+  return WINDOWS_EXECUTABLE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
+function commandCandidates(command: string) {
+  if (process.platform !== "win32") return [command];
+  if (hasExecutableSuffix(command)) return [command];
+  return WINDOWS_EXECUTABLE_SUFFIXES.map((suffix) => `${command}${suffix}`);
+}
+
+function isExecutablePath(path: string) {
+  try {
+    const stats = statSync(path);
+    if (!stats.isFile()) return false;
+    if (process.platform !== "win32") return (stats.mode & 0o111) !== 0;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findCommandOnPath(command: string) {
+  const pathValue = process.env.PATH || "";
+  const cacheKey = [command, pathValue, process.env.PATHEXT || ""].join("\u0000");
+  if (pathLookupCache.has(cacheKey)) return pathLookupCache.get(cacheKey) || "";
+  const paths = pathValue.split(delimiter).map(normalizePathEntry).filter(Boolean);
+  for (const directory of paths) {
+    for (const candidate of commandCandidates(command)) {
+      const fullPath = join(directory, candidate);
+      if (isExecutablePath(fullPath)) {
+        pathLookupCache.set(cacheKey, fullPath);
+        return fullPath;
+      }
+    }
+  }
+  pathLookupCache.set(cacheKey, "");
+  return "";
+}
+
+function normalizePathEntry(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
 }
 
 function formatUpdateResult(result: RunResult & { target: string }) {
@@ -245,6 +325,7 @@ function extractZeroclawSummary(text: string) {
 
 export async function statusPayload() {
   const now = Date.now();
+  pruneStatusCaches(now);
   if (cachedStatus && now - cachedStatus.at < statusCacheMs) {
     return { ...cachedStatus.payload, cached: true };
   }
@@ -257,14 +338,33 @@ export async function statusPayload() {
       return payload;
     })
     .catch((error) => {
-      if (cachedStatus) return cachedStatus.payload;
+      if (cachedStatus) return staleStatusPayload(cachedStatus.payload, error);
       throw error;
     })
     .finally(() => {
       if (inflightStatus === pending) inflightStatus = null;
     });
   inflightStatus = pending;
-  return { ...(await pending), cached: false };
+  const payload = await pending;
+  return payload.stale ? payload : { ...payload, cached: false };
+}
+
+function pruneStatusCaches(now = Date.now()) {
+  for (const [target, cached] of installedCache) {
+    if (now - cached.at >= statusCacheMs) installedCache.delete(target);
+  }
+  for (const [key, cached] of commandCache) {
+    if (now - cached.at >= staticStatusCacheMs) commandCache.delete(key);
+  }
+}
+
+function staleStatusPayload(payload: StatusPayload, error: unknown): StatusPayload {
+  return {
+    ...payload,
+    cached: true,
+    stale: true,
+    error: error instanceof Error ? error.message : String(error),
+  };
 }
 
 async function buildStatusPayload() {
@@ -303,10 +403,12 @@ async function buildStatusPayload() {
 
 async function cachedRunCommand(args: string[], options: Parameters<typeof runCommand>[1], ttlMs: number) {
   const key = args.join("\u0000");
+  const now = Date.now();
   const cached = commandCache.get(key);
-  if (cached && Date.now() - cached.at < ttlMs) {
+  if (cached && now - cached.at < ttlMs) {
     return { ...cached.result };
   }
+  if (cached) commandCache.delete(key);
   const result = await runCommand(args, options);
   if (result.ok) {
     commandCache.set(key, { at: Date.now(), result: { ...result } });
@@ -320,7 +422,7 @@ export function chatCommand(payload: Record<string, unknown>) {
   const prompt = String(payload.prompt || "").trim();
   const thinking = String(payload.thinking || "high").trim();
   const speed = normalizeSpeed(payload.speed);
-  const timeout = Number(payload.timeout || 600);
+  const timeout = normalizeChatTimeout(payload.timeout);
   const promptForSpeed = speedPrompt(prompt, speed);
 
   if (!prompt) throw new Error("메시지가 비어 있습니다.");
@@ -405,6 +507,12 @@ export function chatCommand(payload: Record<string, unknown>) {
   }
 
   throw new Error(`알 수 없는 에이전트입니다: ${agent}`);
+}
+
+export function normalizeChatTimeout(value: unknown, fallback = 600) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maxChatTimeout, Math.max(minChatTimeout, Math.trunc(parsed)));
 }
 
 function normalizeSpeed(value: unknown) {
