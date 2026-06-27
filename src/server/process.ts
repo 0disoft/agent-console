@@ -1,7 +1,7 @@
 import { defaultCwd, resolveCwd, timeoutDefault } from "./config";
 import type { RunOptions, RunResult } from "./types";
 
-const ANSI_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
+const ANSI_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\](?:[^\x1b\x07]|\x1b(?!\\))*?(?:\x07|\x1b\\))/g;
 const MAX_CAPTURED_OUTPUT_CHARS = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = `\n\n[Agent Console truncated captured output after ${MAX_CAPTURED_OUTPUT_CHARS} characters.]`;
 

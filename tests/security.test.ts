@@ -190,6 +190,7 @@ describe("security regressions", () => {
     expect(stripProcessAnsi("a\x1b[31mred\x1b[0m")).toBe("ared");
     expect(stripProcessAnsi("a\x1b]0;title\x07b")).toBe("ab");
     expect(stripProcessAnsi("a\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\b")).toBe("alinkb");
+    expect(stripBrowserAnsi("a\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\b")).toBe("alinkb");
     expect(stripBrowserAnsi("a\x1b]0;title\x07b")).toBe("ab");
   });
 
